@@ -369,7 +369,12 @@ impl VectorXOperator {
     async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
         let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let proof_as_bytes = proof.bytes();
+        // TODO: sp1_sdk should return empty bytes in mock mode.
+        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
+            "".to_string()
+        } else {
+            proof.bytes()
+        };
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
         let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
@@ -407,7 +412,12 @@ impl VectorXOperator {
     async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
         let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let proof_as_bytes = proof.bytes();
+        // TODO: sp1_sdk should return empty bytes in mock mode.
+        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
+            "".to_string()
+        } else {
+            proof.bytes()
+        };
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
         let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
