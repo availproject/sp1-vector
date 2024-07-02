@@ -371,9 +371,11 @@ impl VectorXOperator {
 
         // TODO: sp1_sdk should return empty bytes in mock mode.
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            "".to_string()
+            vec![]
         } else {
-            proof.bytes()
+            let proof_str = proof.bytes();
+            // Strip the 0x prefix from proof_str, if it exists.
+            hex::decode(proof_str.replace("0x", "")).unwrap()
         };
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
@@ -414,9 +416,11 @@ impl VectorXOperator {
 
         // TODO: sp1_sdk should return empty bytes in mock mode.
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            "".to_string()
+            vec![]
         } else {
-            proof.bytes()
+            let proof_str = proof.bytes();
+            // Strip the 0x prefix from proof_str, if it exists.
+            hex::decode(proof_str.replace("0x", "")).unwrap()
         };
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
