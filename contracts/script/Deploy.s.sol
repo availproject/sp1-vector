@@ -6,7 +6,6 @@ import {Vm} from "forge-std/Vm.sol";
 import {StdAssertions} from "forge-std/StdAssertions.sol";
 import {Script} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {SP1Verifier} from "@sp1-contracts/SP1Verifier.sol";
 import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 import {SP1Vector} from "../src/SP1Vector.sol";
@@ -22,6 +21,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 // - SP1_VECTOR_PROGRAM_VKEY
 // - CREATE2_SALT
 // - GUARDIAN_ADDRESS
+// - SP1_VERIFIER_ADDRESS
 
 contract DeployScript is Script {
     using stdJson for string;
@@ -53,7 +53,7 @@ contract DeployScript is Script {
         if (keccak256(abi.encodePacked(vm.envString("SP1_PROVER"))) == keccak256(abi.encodePacked(mockStr))) {
             verifier = ISP1Verifier(address(new SP1MockVerifier()));
         } else {
-            verifier = ISP1Verifier(address(new SP1Verifier()));
+            verifier = ISP1Verifier(vm.envAddress("SP1_VERIFIER_ADDRESS"));
         }
         ERC1967Proxy proxy = new ERC1967Proxy{salt: vm.envBytes32("CREATE2_SALT")}(address(sp1VectorImpl), "");
         sp1Vector = SP1Vector(address(proxy));

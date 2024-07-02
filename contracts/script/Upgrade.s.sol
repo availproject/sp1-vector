@@ -6,7 +6,6 @@ import {Vm} from "forge-std/Vm.sol";
 import {StdAssertions} from "forge-std/StdAssertions.sol";
 import {Script} from "forge-std/Script.sol";
 import {stdJson} from "forge-std/StdJson.sol";
-import {SP1Verifier} from "@sp1-contracts/SP1Verifier.sol";
 import {SP1MockVerifier} from "@sp1-contracts/SP1MockVerifier.sol";
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 import {SP1Vector} from "../src/SP1Vector.sol";
@@ -17,6 +16,7 @@ import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.s
 // - CONTRACT_ADDRESS
 // - SP1_VECTOR_PROGRAM_VKEY
 // - SP1_PROVER
+// - SP1_VERIFIER_ADDRESS
 
 contract UpgradeScript is Script {
     using stdJson for string;
@@ -39,8 +39,7 @@ contract UpgradeScript is Script {
             SP1MockVerifier mockVerifier = new SP1MockVerifier();
             sp1Vector.updateVerifier(address(mockVerifier));
         } else {
-            SP1Verifier verifier = new SP1Verifier();
-            sp1Vector.updateVerifier(address(verifier));
+            sp1Vector.updateVerifier(vm.envAddress("SP1_VERIFIER_ADDRESS"));
         }
         sp1Vector.updateVectorXProgramVkey(vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY"));
 

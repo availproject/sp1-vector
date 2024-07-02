@@ -110,6 +110,8 @@ services:
         value: turing
       - key: SP1_PROVER
         value: network
+      - key: PROVER_NETWORK_RPC
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
@@ -145,6 +147,8 @@ services:
         value: turing
       - key: SP1_PROVER
         value: network
+      - key: PROVER_NETWORK_RPC
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID

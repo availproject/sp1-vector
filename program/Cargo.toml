@@ -5,8 +5,8 @@ name = "sp1-vectorx-program"
 edition = "2021"
 
 [dependencies]
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }
 sp1-vector-primitives = { path = "../primitives" }
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.5-testnet" }
 alloy-sol-types = "0.7.5"
 
 [patch.crates-io]
