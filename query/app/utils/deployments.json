@@ -1,24 +1,24 @@
 {
     "deployments": [
         {
-            "contractChainId": 1,
-            "contractAddress": "0x6c903CbDA6D8bdECABeBe72bdde21DEcaDd28bD7",
-            "cursorStartBlock": 19791933
-        },
-        {
             "contractChainId": 11155111,
             "contractAddress": "0xe542db219a7e2b29c7aeaeace242c9a2cd528f96",
-            "cursorStartBlock": 5819725
+            "cursorStartBlock": 6204379
         },
         {
             "contractChainId": 11155111,
             "contractAddress": "0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75",
-            "cursorStartBlock": 5819703
+            "cursorStartBlock": 6204379
+        },
+        {
+            "contractChainId": 421614,
+            "contractAddress": "0xA712dfec48AF3a78419A8FF90fE8f97Ae74680F0",
+            "cursorStartBlock": 59163104
         },
         {
             "contractChainId": 421614,
             "contractAddress": "0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75",
-            "cursorStartBlock": 39706977
+            "cursorStartBlock": 59163104
         }
     ]
 }

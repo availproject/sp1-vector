@@ -1,10 +1,104 @@
 services:
+  # Workers for the existing deployed Vector contracts.
+  ## Hex Devnet
   - type: worker
     runtime: rust
-    name: sp1-vectorx-operator-eu
-    repo: https://github.com/succinctlabs/sp1-vectorx
+    name: sp1vector-hex:sepolia
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: script
+    buildCommand: rm -rf build.rs && cargo build --bin operator --release
+    startCommand: cargo run --bin operator --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://rpc-hex-devnet.avail.tools/ws
+      - key: AVAIL_CHAIN_ID
+        value: hex
+      - key: SP1_PROVER
+        value: mock
+      - key: VECTORX_QUERY_URL
+        value: https://vectorx-query.succinct.xyz
+      - key: CHAIN_ID
+        value: 11155111
+      - key: CONTRACT_ADDRESS
+        value: 0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75
+      - key: BLOCK_UPDATE_INTERVAL
+        value: 30
+      - key: LOOP_INTERVAL_MINS
+        value: 5
+      - key: RUST_LOG
+        value: info
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+  - type: worker
+    runtime: rust
+    name: sp1vector-hex:arbsepolia
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: script
+    buildCommand: rm -rf build.rs && cargo build --bin operator --release
+    startCommand: cargo run --bin operator --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://rpc-hex-devnet.avail.tools/ws
+      - key: AVAIL_CHAIN_ID
+        value: hex
+      - key: SP1_PROVER
+        value: mock
+      - key: VECTORX_QUERY_URL
+        value: https://vectorx-query.succinct.xyz
+      - key: CHAIN_ID
+        value: 421614
+      - key: CONTRACT_ADDRESS
+        value: 0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75
+      - key: BLOCK_UPDATE_INTERVAL
+        value: 30
+      - key: LOOP_INTERVAL_MINS
+        value: 5
+      - key: RUST_LOG
+        value: info
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+  - type: worker
+    runtime: rust
+    name: indexer-hex
+    repo: https://github.com/succinctlabs/sp1-vector
     region: frankfurt
-    plan: pro
+    plan: standard
+    rootDir: services
+    buildCommand: cargo build --bin indexer --release
+    startCommand: cargo run --bin indexer --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://rpc-hex-devnet.avail.tools/ws
+      - key: AVAIL_CHAIN_ID
+        value: hex
+      - key: RUST_LOG
+        value: info
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: KEY_ID
+        sync: false
+  ## Turing Testnet
+  - type: worker
+    runtime: rust
+    name: sp1vector-turing:sepolia
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -23,10 +117,78 @@ services:
       - key: CHAIN_ID
         value: 11155111
       - key: CONTRACT_ADDRESS
-        value: 0x04819f50EE813a8f6F6ba28288551c4339fDC881
+        value: 0xe542db219a7e2b29c7aeaeace242c9a2cd528f96
+      - key: RUST_LOG
+        value: info
+      - key: BLOCK_UPDATE_INTERVAL
+        value: 300
+      - key: LOOP_INTERVAL_MINS
+        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
         sync: false
       - key: SP1_PRIVATE_KEY
+        sync: false
+  - type: worker
+    runtime: rust
+    name: sp1vector-turing:arbsepolia
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: script
+    buildCommand: rm -rf build.rs && cargo build --bin operator --release
+    startCommand: cargo run --bin operator --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://turing-rpc.avail.so/ws
+      - key: AVAIL_CHAIN_ID
+        value: turing
+      - key: SP1_PROVER
+        value: network
+      - key: PROVER_NETWORK_RPC
+        value: https://rpc-staging.succinct.xyz
+      - key: VECTORX_QUERY_URL
+        value: https://vectorx-query.succinct.xyz
+      - key: CHAIN_ID
+        value: 421614
+      - key: CONTRACT_ADDRESS
+        value: 0xA712dfec48AF3a78419A8FF90fE8f97Ae74680F0
+      - key: RUST_LOG
+        value: info
+      - key: BLOCK_UPDATE_INTERVAL
+        value: 300
+      - key: LOOP_INTERVAL_MINS
+        value: 10
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+      - key: SP1_PRIVATE_KEY
+        sync: false
+  - type: worker
+    runtime: rust
+    name: indexer-turing
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: frankfurt
+    plan: standard
+    rootDir: services
+    buildCommand: cargo build --bin indexer --release
+    startCommand: cargo run --bin indexer --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://turing-rpc.avail.so/ws
+      - key: AVAIL_CHAIN_ID
+        value: turing
+      - key: RUST_LOG
+        value: info
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: KEY_ID
         sync: false

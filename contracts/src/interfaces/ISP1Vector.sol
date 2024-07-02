@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity ^0.8.0;
 
-interface IVectorX {
+interface ISP1Vector {
     /// @notice Emits event with the inputs of a header range request.
     /// @param trustedBlock The block height of the trusted block.
     /// @param trustedHeader The header hash of the trusted block.
@@ -57,6 +57,12 @@ interface IVectorX {
     /// @notice The proof type is not HeaderRangeProof or RotateProof.
     error InvalidProofType();
 
+    /// @notice The merkle tree size does not match the expected size.
+    error InvalidMerkleTreeSize();
+
     /// @notice The trusted block inside the proof does not match the trusted block of the contract.
     error BlockHeightMismatch();
+
+    /// @notice Target block is not greater than the latest block.
+    error InvalidTargetBlock();
 }

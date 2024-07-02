@@ -1,21 +1,21 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.25;
+pragma solidity ^0.8.0;
 
-import {IVectorX} from "./interfaces/IVectorX.sol";
+import {ISP1Vector} from "./interfaces/ISP1Vector.sol";
 import {TimelockedUpgradeable} from "@succinctx/upgrades/TimelockedUpgradeable.sol";
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 
-/// @notice VectorX is a light client for Avail's consensus.
+/// @notice SP1Vector is a light client for Avail's consensus.
 /// @dev The light client tracks both the state of Avail's Grandpa consensus and Vector, Avail's
 ///     data commitment solution.
 /// @dev Ensure that all new storage variables are placed after existing storage variables to avoid
 /// storage corruption during upgrades.
-contract VectorX is IVectorX, TimelockedUpgradeable {
+contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     /// @notice Indicator of if the contract is frozen.
     bool public frozen;
 
     /// @notice The address of the gateway contract.
-    /// @dev DEPRECATED: Do not use.
+    /// @dev DEPRECATED: Do not use. Compatibility for upgrades from VectorX.
     address public gateway_deprecated;
 
     /// @notice The latest block that has been committed.
@@ -25,11 +25,11 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
     uint64 public latestAuthoritySetId;
 
     /// @notice The function for requesting a header range.
-    /// @dev DEPRECATED: Do not use.
+    /// @dev DEPRECATED: Do not use. Compatibility for upgrades from VectorX.
     bytes32 public headerRangeFunctionId_deprecated;
 
     /// @notice The function for requesting a rotate.
-    /// @dev DEPRECATED: Do not use.
+    /// @dev DEPRECATED: Do not use. Compatibility for upgrades from VectorX.
     bytes32 public rotateFunctionId_deprecated;
 
     /// @notice Maps block height to the header hash of the block.
@@ -53,7 +53,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
     /// @notice The commitment tree size for the header range.
     uint32 public headerRangeCommitmentTreeSize;
 
-    /// @notice The verification key for the VectorX program.
+    /// @notice The verification key for the SP1Vector program.
     bytes32 public vectorXProgramVkey;
 
     /// @notice The deployed SP1 verifier contract.
@@ -72,7 +72,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
         uint64 authoritySetId;
         bytes32 authoritySetHash;
         uint32 headerRangeCommitmentTreeSize;
-        bytes32 vectorXProgramVkey;
+        bytes32 vectorProgramVkey;
         address verifier;
     }
 
@@ -85,6 +85,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
         bytes32 target_header_hash;
         bytes32 state_root_commitment;
         bytes32 data_root_commitment;
+        uint32 merkle_tree_size;
     }
 
     struct RotateOutputs {
@@ -110,7 +111,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
         authoritySetIdToHash[_params.authoritySetId] = _params.authoritySetHash;
         latestAuthoritySetId = _params.authoritySetId;
         latestBlock = _params.height;
-        vectorXProgramVkey = _params.vectorXProgramVkey;
+        vectorXProgramVkey = _params.vectorProgramVkey;
         verifier = ISP1Verifier(_params.verifier);
         headerRangeCommitmentTreeSize = _params.headerRangeCommitmentTreeSize;
 
@@ -122,7 +123,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
         verifier = ISP1Verifier(_verifier);
     }
 
-    /// @notice Update the VectorX program verification key.
+    /// @notice Update the SP1Vector program verification key.
     function updateVectorXProgramVkey(bytes32 _vectorXProgramVkey) external onlyGuardian {
         vectorXProgramVkey = _vectorXProgramVkey;
     }
@@ -202,41 +203,44 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
             revert ContractFrozen();
         }
 
-        // SP1 VectorX proofs have the same format, ProofOutputs, regardless of the proof type.
+        // Parse the outputs from the committed public values associated with the proof.
         ProofOutputs memory proofOutputs = abi.decode(publicValues, (ProofOutputs));
 
-        // Assert this is a header range proof. This is a sanity check to prevent accidental submission
-        // of a rotate proof.
+        // Assert this is a header range proof. Sanity check to prevent accidental submission of a
+        // rotate proof.
         if (proofOutputs.proofType != ProofType.HeaderRangeProof) {
             revert InvalidProofType();
         }
 
-        // Decode the header range outputs from the proof.
+        // Decode the header range outputs from the proof outputs.
         HeaderRangeOutputs memory hro = abi.decode(proofOutputs.headerRangeOutputs, (HeaderRangeOutputs));
 
-        // Verify the trusted header hash has already been proven in the contract.
+        // Verify the merkle tree size in the proof matches the expected size.
+        if (hro.merkle_tree_size != headerRangeCommitmentTreeSize) {
+            revert InvalidMerkleTreeSize();
+        }
+
+        // Verify the trusted header matches the stored trusted header and latestBlock.
         bytes32 storedTrustedHeader = blockHeightToHeaderHash[latestBlock];
         if (storedTrustedHeader == bytes32(0)) {
             revert TrustedHeaderNotFound();
         }
-        // Verify the trusted header hash matches the stored trusted header hash.
-        if (hro.trusted_header_hash != storedTrustedHeader) {
+        if (hro.trusted_header_hash != storedTrustedHeader && hro.trusted_block != latestBlock) {
             revert TrustedHeaderMismatch();
         }
 
-        // Verify the authority set hash has already been proven in the contract.
+        // Verify the authority set hash matches the stored authority set hash.
         bytes32 authoritySetHashStored = authoritySetIdToHash[hro.authority_set_id];
         if (authoritySetHashStored == bytes32(0)) {
             revert AuthoritySetNotFound();
         }
-        // Verify the authority set hash matches the stored authority set hash.
         if (hro.authority_set_hash != authoritySetHashStored) {
             revert AuthoritySetMismatch();
         }
 
-        // Verify the trusted block matches the latest block.
-        if (hro.trusted_block != latestBlock) {
-            revert BlockHeightMismatch();
+        // Verify the target block is greater than the latest block.
+        if (hro.target_block <= latestBlock) {
+            revert InvalidTargetBlock();
         }
 
         // If the authority set id is less than the latest authority set id proven in the contract,
@@ -245,24 +249,12 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
             revert OldAuthoritySetId();
         }
 
-        require(hro.target_block > latestBlock);
-
         // Verify the proof with the associated public values. This will revert if proof invalid.
         verifier.verifyProof(vectorXProgramVkey, publicValues, proof);
 
-        // Store the data and state commitments for the range (latestBlock, targetBlock].
-        bytes32 key = keccak256(abi.encode(latestBlock, hro.target_block));
-        dataRootCommitments[key] = hro.data_root_commitment;
-        stateRootCommitments[key] = hro.state_root_commitment;
-        rangeStartBlocks[key] = latestBlock;
-
-        // Add the target header hash to the contract.
-        blockHeightToHeaderHash[hro.target_block] = hro.target_header_hash;
-
         emit HeadUpdate(hro.target_block, hro.target_header_hash);
-
         emit HeaderRangeCommitmentStored(
-            latestBlock,
+            hro.trusted_block,
             hro.target_block,
             hro.data_root_commitment,
             hro.state_root_commitment,
@@ -274,6 +266,15 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
         if (hro.authority_set_id > latestAuthoritySetId) {
             latestAuthoritySetId = hro.authority_set_id;
         }
+
+        // Store the data and state commitments for the range (latestBlock, targetBlock].
+        bytes32 key = keccak256(abi.encode(latestBlock, hro.target_block));
+        dataRootCommitments[key] = hro.data_root_commitment;
+        stateRootCommitments[key] = hro.state_root_commitment;
+        rangeStartBlocks[key] = latestBlock;
+
+        // Add the target header hash to the contract.
+        blockHeightToHeaderHash[hro.target_block] = hro.target_header_hash;
 
         // Update latest block.
         latestBlock = hro.target_block;
@@ -287,7 +288,7 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
             revert ContractFrozen();
         }
 
-        // SP1 VectorX proofs have the same format, ProofOutputs, regardless of the proof type.
+        // Parse the outputs from the committed public values associated with the proof.
         ProofOutputs memory proofOutputs = abi.decode(publicValues, (ProofOutputs));
 
         // Assert this is a rotate proof.
@@ -300,7 +301,6 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
 
         // Verify the current authority set hash has already been proven in the contract.
         bytes32 currentAuthoritySetHashStored = authoritySetIdToHash[ro.current_authority_set_id];
-        // Note: Occurs if requesting a new authority set id that is not the next authority set id.
         if (currentAuthoritySetHashStored == bytes32(0)) {
             revert AuthoritySetNotFound();
         }
@@ -308,23 +308,18 @@ contract VectorX is IVectorX, TimelockedUpgradeable {
             revert AuthoritySetMismatch();
         }
 
+        // Verify the next authority set hash does not exist yet.
         bytes32 nextAuthoritySetHash = authoritySetIdToHash[ro.current_authority_set_id + 1];
         if (nextAuthoritySetHash != bytes32(0)) {
             revert NextAuthoritySetExists();
         }
 
-        // Verify the proof with the associated public values. This will revert if proof invalid.
+        // Verify the proof with the associated public values.
         verifier.verifyProof(vectorXProgramVkey, publicValues, proof);
+
+        emit AuthoritySetStored(ro.current_authority_set_id + 1, ro.new_authority_set_hash);
 
         // Store the authority set hash for the next authority set id.
         authoritySetIdToHash[ro.current_authority_set_id + 1] = ro.new_authority_set_hash;
-
-        emit AuthoritySetStored(ro.current_authority_set_id + 1, ro.new_authority_set_hash);
-    }
-
-    /// @notice Update the verification key hash if the SP1 program was updated.
-    /// @param _vkey The verification key hash of the new SP1 program.
-    function updateVkeyHash(bytes32 _vkey) external onlyGuardian {
-        vectorXProgramVkey = _vkey;
     }
 }

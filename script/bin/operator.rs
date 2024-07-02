@@ -6,7 +6,7 @@ use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::{Address, B256},
     providers::{
-        fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller, WalletFiller},
+        fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, WalletFiller},
         Identity, Provider, ProviderBuilder, RootProvider,
     },
     signers::local::PrivateKeySigner,
@@ -18,14 +18,14 @@ use anyhow::Result;
 use log::{error, info};
 use services::input::RpcDataFetcher;
 use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin};
-use sp1_vectorx_primitives::types::ProofType;
-use sp1_vectorx_script::relay;
+use sp1_vector_primitives::types::ProofType;
+use sp1_vectorx_script::relay::{self};
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
 sol! {
     #[allow(missing_docs)]
     #[sol(rpc)]
-    contract VectorX {
+    contract SP1Vector {
         bool public frozen;
         uint32 public latestBlock;
         uint64 public latestAuthoritySetId;
@@ -42,10 +42,7 @@ sol! {
 /// Alias the fill provider for the Ethereum network. Retrieved from the instantiation
 /// of the ProviderBuilder. Recommended method for passing around a ProviderBuilder.
 type EthereumFillProvider = FillProvider<
-    JoinFill<
-        JoinFill<JoinFill<JoinFill<Identity, GasFiller>, NonceFiller>, ChainIdFiller>,
-        WalletFiller<EthereumWallet>,
-    >,
+    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, ChainIdFiller>, WalletFiller<EthereumWallet>>,
     RootProvider<Http<Client>>,
     Http<Client>,
     Ethereum,
@@ -55,7 +52,8 @@ struct VectorXOperator {
     wallet_filler: Arc<EthereumFillProvider>,
     client: ProverClient,
     pk: SP1ProvingKey,
-    address: Address,
+    contract_address: Address,
+    relayer_address: Address,
     chain_id: u64,
 }
 
@@ -94,9 +92,11 @@ impl VectorXOperator {
             .parse()
             .unwrap();
         let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
+        let relayer_address = signer.address();
         let wallet = EthereumWallet::from(signer);
         let provider = ProviderBuilder::new()
-            .with_recommended_fillers()
+            .filler(GasFiller)
+            .filler(ChainIdFiller::default())
             .wallet(wallet)
             .on_http(rpc_url);
 
@@ -105,7 +105,8 @@ impl VectorXOperator {
             pk,
             wallet_filler: Arc::new(provider),
             chain_id,
-            address: contract_address,
+            contract_address,
+            relayer_address,
         }
     }
 
@@ -119,8 +120,19 @@ impl VectorXOperator {
         let fetcher = RpcDataFetcher::new().await;
 
         let proof_type = ProofType::HeaderRangeProof;
+        // Fetch the header range commitment tree size from the contract.
+        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
+        let output = contract
+            .headerRangeCommitmentTreeSize()
+            .call()
+            .await
+            .unwrap();
         let header_range_inputs = fetcher
-            .get_header_range_inputs(trusted_block, target_block)
+            .get_header_range_inputs(
+                trusted_block,
+                target_block,
+                Some(output.headerRangeCommitmentTreeSize),
+            )
             .await;
 
         let curr_authority_set_id = fetcher.get_authority_set_id(target_block - 1).await;
@@ -143,6 +155,11 @@ impl VectorXOperator {
         stdin.write(&header_range_inputs);
         stdin.write(&target_justification);
 
+        info!(
+            "Requesting header range proof from block {} to block {}.",
+            trusted_block, target_block
+        );
+
         self.client.prove_plonk(&self.pk, stdin)
     }
 
@@ -157,12 +174,17 @@ impl VectorXOperator {
         stdin.write(&proof_type);
         stdin.write(&rotate_input);
 
+        info!(
+            "Requesting rotate proof to add authority set {}.",
+            current_authority_set_id + 1
+        );
+
         self.client.prove_plonk(&self.pk, stdin)
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
-    async fn find_rotate(&self) -> Option<u64> {
-        let rotate_contract_data = self.get_contract_data_for_rotate().await;
+    async fn find_rotate(&self) -> Result<Option<u64>> {
+        let rotate_contract_data = self.get_contract_data_for_rotate().await?;
 
         let fetcher = RpcDataFetcher::new().await;
         let head = fetcher.get_head().await;
@@ -177,19 +199,14 @@ impl VectorXOperator {
         if current_authority_set_id < head_authority_set_id
             && !rotate_contract_data.next_authority_set_hash_exists
         {
-            info!(
-                "Requesting rotate to next authority set id, which is {:?}.",
-                current_authority_set_id + 1
-            );
-
-            return Some(current_authority_set_id);
+            return Ok(Some(current_authority_set_id));
         }
-        None
+        Ok(None)
     }
 
     // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
-    async fn find_header_range(&self, ideal_block_interval: u32) -> Option<(u32, u32)> {
-        let header_range_contract_data = self.get_contract_data_for_header_range().await;
+    async fn find_header_range(&self, ideal_block_interval: u32) -> Result<Option<(u32, u32)>> {
+        let header_range_contract_data = self.get_contract_data_for_header_range().await?;
 
         let fetcher = RpcDataFetcher::new().await;
 
@@ -208,7 +225,7 @@ impl VectorXOperator {
 
             // Check if the next authority set id exists in the contract. If not, a rotate is needed.
             if !header_range_contract_data.next_authority_set_hash_exists {
-                return None;
+                return Ok(None);
             }
             request_authority_set_id = next_authority_set_id;
         }
@@ -226,26 +243,25 @@ impl VectorXOperator {
             .await;
 
         if let Some(block_to_step_to) = block_to_step_to {
-            return Some((
+            return Ok(Some((
                 header_range_contract_data.vectorx_latest_block,
                 block_to_step_to,
-            ));
+            )));
         }
-        None
+        Ok(None)
     }
 
     // Current block, step_range_max and whether next authority set hash exists.
-    async fn get_contract_data_for_header_range(&self) -> HeaderRangeContractData {
+    async fn get_contract_data_for_header_range(&self) -> Result<HeaderRangeContractData> {
         let fetcher = RpcDataFetcher::new().await;
 
-        let contract = VectorX::new(self.address, self.wallet_filler.clone());
+        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let vectorx_latest_block = contract.latestBlock().call().await.unwrap().latestBlock;
+        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
         let header_range_commitment_tree_size = contract
             .headerRangeCommitmentTreeSize()
             .call()
-            .await
-            .unwrap()
+            .await?
             .headerRangeCommitmentTreeSize;
 
         let avail_current_block = fetcher.get_head().await.number;
@@ -257,31 +273,29 @@ impl VectorXOperator {
         let next_authority_set_hash = contract
             .authoritySetIdToHash(next_authority_set_id)
             .call()
-            .await
-            .unwrap()
+            .await?
             ._0;
 
-        HeaderRangeContractData {
+        Ok(HeaderRangeContractData {
             vectorx_latest_block,
             avail_current_block,
             header_range_commitment_tree_size,
             next_authority_set_hash_exists: next_authority_set_hash != B256::ZERO,
-        }
+        })
     }
 
     // Current block and whether next authority set hash exists.
-    async fn get_contract_data_for_rotate(&self) -> RotateContractData {
-        let contract = VectorX::new(self.address, self.wallet_filler.clone());
+    async fn get_contract_data_for_rotate(&self) -> Result<RotateContractData> {
+        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
         // Fetch the current block from the contract
-        let vectorx_latest_block = contract.latestBlock().call().await.unwrap().latestBlock;
+        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
 
         // Fetch the current authority set id from the contract
         let vectorx_latest_authority_set_id = contract
             .latestAuthoritySetId()
             .call()
-            .await
-            .unwrap()
+            .await?
             .latestAuthoritySetId;
 
         // Check if the next authority set id exists in the contract
@@ -289,16 +303,15 @@ impl VectorXOperator {
         let next_authority_set_hash = contract
             .authoritySetIdToHash(next_authority_set_id)
             .call()
-            .await
-            .unwrap()
+            .await?
             ._0;
         let next_authority_set_hash_exists = next_authority_set_hash != B256::ZERO;
 
         // Return the fetched data
-        RotateContractData {
+        Ok(RotateContractData {
             current_block: vectorx_latest_block,
             next_authority_set_hash_exists,
-        }
+        })
     }
 
     // The logic for finding the block to step to is as follows:
@@ -317,10 +330,8 @@ impl VectorXOperator {
         let fetcher = RpcDataFetcher::new().await;
         let last_justified_block = fetcher.last_justified_block(authority_set_id).await;
 
-        println!("Last justified block: {:?}", last_justified_block);
-
         // Step to the last justified block of the current epoch if it is in range. When the last
-        // justified block is 0, the VectorX contract's latest epoch is the current epoch on the
+        // justified block is 0, the SP1Vector contract's latest epoch is the current epoch on the
         // Avail chain.
         if last_justified_block != 0
             && last_justified_block <= vectorx_current_block + header_range_commitment_tree_size
@@ -349,11 +360,11 @@ impl VectorXOperator {
         // to find a valid justification. If we're unable to find a justification, something has gone
         // deeply wrong with the justification indexer.
         loop {
-            if block_to_step_to > vectorx_current_block + header_range_commitment_tree_size {
-                info!(
+            if block_to_step_to > max_valid_block_to_step_to {
+                error!(
                     "Unable to find any valid justifications after searching from block {} to block {}. This is likely caused by an issue with the justification indexer.",
                     vectorx_current_block + ideal_block_interval,
-                    vectorx_current_block + header_range_commitment_tree_size
+                    max_valid_block_to_step_to
                 );
                 return None;
             }
@@ -366,17 +377,16 @@ impl VectorXOperator {
                 break;
             }
             block_to_step_to += 1;
-            println!("Block to step to: {:?}", block_to_step_to);
         }
 
         Some(block_to_step_to)
     }
 
-    /// Relay a header range proof to the SP1 VectorX contract.
-    async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) {
-        let contract = VectorX::new(self.address, self.wallet_filler.clone());
+    /// Relay a header range proof to the SP1 SP1Vector contract.
+    async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
+        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let proof_as_bytes = hex::decode(&proof.proof.encoded_proof).unwrap();
+        let proof_as_bytes = hex::decode(&proof.proof.encoded_proof)?;
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
         let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
@@ -384,33 +394,37 @@ impl VectorXOperator {
         // Wait for 3 required confirmations with a timeout of 60 seconds.
         const NUM_CONFIRMATIONS: u64 = 3;
         const TIMEOUT_SECONDS: u64 = 60;
+
+        let current_nonce = self
+            .wallet_filler
+            .get_transaction_count(self.relayer_address)
+            .await?;
 
         let receipt = contract
             .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
             .gas_price(max_fee_per_gas)
             .gas(gas_limit)
+            .nonce(current_nonce)
             .send()
-            .await
-            .unwrap()
+            .await?
             .with_required_confirmations(NUM_CONFIRMATIONS)
             .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
             .get_receipt()
-            .await
-            .unwrap();
+            .await?;
 
         // If status is false, it reverted.
         if !receipt.status() {
-            error!("Transaction reverted!");
+            return Err(anyhow::anyhow!("Transaction reverted!"));
         }
 
-        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
     }
 
-    /// Relay a rotate proof to the SP1 VectorX contract.
-    async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) {
-        let contract = VectorX::new(self.address, self.wallet_filler.clone());
+    /// Relay a rotate proof to the SP1 SP1Vector contract.
+    async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
+        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let proof_as_bytes = hex::decode(&proof.proof.encoded_proof).unwrap();
+        let proof_as_bytes = hex::decode(&proof.proof.encoded_proof)?;
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
         let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
@@ -419,61 +433,65 @@ impl VectorXOperator {
         const NUM_CONFIRMATIONS: u64 = 3;
         const TIMEOUT_SECONDS: u64 = 60;
 
+        let current_nonce = self
+            .wallet_filler
+            .get_transaction_count(self.relayer_address)
+            .await?;
+
         let receipt = contract
             .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
             .gas_price(max_fee_per_gas)
             .gas(gas_limit)
+            .nonce(current_nonce)
             .send()
-            .await
-            .unwrap()
+            .await?
             .with_required_confirmations(NUM_CONFIRMATIONS)
             .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
             .get_receipt()
-            .await
-            .unwrap();
+            .await?;
 
         // If status is false, it reverted.
         if !receipt.status() {
-            error!("Transaction reverted!");
+            return Err(anyhow::anyhow!("Transaction reverted!"));
         }
 
-        println!("Transaction hash: {:?}", receipt.transaction_hash);
+        Ok(receipt.transaction_hash)
     }
 
-    async fn run(&self) {
+    async fn run(&self) -> Result<()> {
         loop {
-            let loop_delay_mins = get_loop_delay_mins();
-            let block_interval = get_update_delay_blocks();
+            let loop_interval_mins = get_loop_interval_mins();
+            let block_interval = get_block_update_interval();
 
             // Check if there is a rotate available for the next authority set.
-            let current_authority_set_id = self.find_rotate().await;
+            let current_authority_set_id = self.find_rotate().await?;
 
             // Request a rotate for the next authority set id.
             if let Some(current_authority_set_id) = current_authority_set_id {
-                let proof = self.request_rotate(current_authority_set_id).await;
-                match proof {
-                    Ok(proof) => {
-                        self.relay_rotate(proof).await;
-                    }
-                    Err(e) => {
-                        error!("Rotate proof generation failed: {}", e);
-                    }
-                };
+                let proof = self.request_rotate(current_authority_set_id).await?;
+                let tx_hash = self.relay_rotate(proof).await?;
+                info!(
+                    "Added authority set {}\nTransaction hash: {}",
+                    current_authority_set_id + 1,
+                    tx_hash
+                );
             }
 
             // Check if there is a header range request available.
-            let header_range_request = self.find_header_range(block_interval).await;
+            let header_range_request = self.find_header_range(block_interval).await?;
 
             if let Some(header_range_request) = header_range_request {
                 // Request the header range proof to block_to_step_to.
-                println!("Trusted block: {}", header_range_request.0);
-                println!("Target block: {}", header_range_request.1);
                 let proof = self
                     .request_header_range(header_range_request.0, header_range_request.1)
                     .await;
                 match proof {
                     Ok(proof) => {
-                        self.relay_header_range(proof).await;
+                        let tx_hash = self.relay_header_range(proof).await?;
+                        info!(
+                            "Posted data commitment from block {} to block {}\nTransaction hash: {}",
+                            header_range_request.0, header_range_request.1, tx_hash
+                        );
                     }
                     Err(e) => {
                         error!("Header range proof generation failed: {}", e);
@@ -482,34 +500,34 @@ impl VectorXOperator {
             }
 
             // Sleep for N minutes.
-            info!("Sleeping for {} minutes.", loop_delay_mins);
-            tokio::time::sleep(tokio::time::Duration::from_secs(60 * loop_delay_mins)).await;
+            info!("Sleeping for {} minutes.", loop_interval_mins);
+            tokio::time::sleep(tokio::time::Duration::from_secs(60 * loop_interval_mins)).await;
         }
     }
 }
 
-fn get_loop_delay_mins() -> u64 {
-    let loop_delay_mins_env = env::var("LOOP_DELAY_MINS");
-    let mut loop_delay_mins = 60;
-    if loop_delay_mins_env.is_ok() {
-        loop_delay_mins = loop_delay_mins_env
+fn get_loop_interval_mins() -> u64 {
+    let loop_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
+    let mut loop_interval_mins = 60;
+    if loop_interval_mins_env.is_ok() {
+        loop_interval_mins = loop_interval_mins_env
             .unwrap()
             .parse::<u64>()
-            .expect("invalid LOOP_DELAY_MINS");
+            .expect("invalid LOOP_INTERVAL_MINS");
     }
-    loop_delay_mins
+    loop_interval_mins
 }
 
-fn get_update_delay_blocks() -> u32 {
-    let update_delay_blocks_env = env::var("UPDATE_DELAY_BLOCKS");
-    let mut update_delay_blocks = 360;
-    if update_delay_blocks_env.is_ok() {
-        update_delay_blocks = update_delay_blocks_env
+fn get_block_update_interval() -> u32 {
+    let block_update_interval_env = env::var("BLOCK_UPDATE_INTERVAL");
+    let mut block_update_interval = 360;
+    if block_update_interval_env.is_ok() {
+        block_update_interval = block_update_interval_env
             .unwrap()
             .parse::<u32>()
-            .expect("invalid UPDATE_DELAY_BLOCKS");
+            .expect("invalid BLOCK_UPDATE_INTERVAL");
     }
-    update_delay_blocks
+    block_update_interval
 }
 
 #[tokio::main]
@@ -518,5 +536,10 @@ async fn main() {
     env_logger::init();
 
     let operator = VectorXOperator::new().await;
-    operator.run().await;
+
+    loop {
+        if let Err(e) = operator.run().await {
+            error!("Error running operator: {}", e);
+        }
+    }
 }

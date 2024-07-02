@@ -3,20 +3,21 @@ use sha2::{Digest, Sha256};
 use crate::types::DecodedHeaderData;
 use alloy_primitives::B256;
 
-// Computes the simple Merkle root of the leaves.
-// If the number of leaves is not a power of 2, the leaves are extended with 0s to the next power of 2.
+// Computes the simple Merkle root of the leaves. If the number of leaves is not a power of 2, pad
+// with empty 32 byte arrays till the next power of 2.
 pub fn get_merkle_root(leaves: Vec<B256>) -> B256 {
+    // Return empty 32 byte array if there are no leaves.
     if leaves.is_empty() {
         return B256::from_slice(&[0u8; 32]);
     }
 
-    // Extend leaves to a power of 2.
+    // Extend leaves to the next power of 2 if needed.
     let mut leaves = leaves;
     while leaves.len().count_ones() != 1 {
         leaves.push(B256::from([0u8; 32]));
     }
 
-    // In VectorX, the leaves are not hashed.
+    // Note: In SP1 Vector, the leaves are not hashed.
     let mut nodes = leaves.clone();
     while nodes.len() > 1 {
         nodes = (0..nodes.len() / 2)
@@ -66,11 +67,11 @@ pub fn get_merkle_root_commitments(
     (state_root_commitment, data_root_commitment)
 }
 
-// TODO: Should be removed when we read header_range_tree_commitment_size from the contract.
+/// NOTE: ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
 pub fn get_merkle_tree_size(num_headers: u32) -> usize {
     let mut size = 1;
     while size < num_headers {
         size *= 2;
     }
-    size.try_into().unwrap()
+    size as usize
 }

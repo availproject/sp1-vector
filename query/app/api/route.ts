@@ -277,6 +277,28 @@ function verifyMerkleBranch(
     );
 }
 
+// Compute the Merkle Root from the dataRoots after confirming it's a power of 2.
+function computeDataCommitment(dataRoots: Uint8Array[], commitmentTreeSize: number): Uint8Array {
+    if (dataRoots.length != commitmentTreeSize) {
+        throw new Error('Data roots length must be a power of 2!');
+    }
+    let level = dataRoots;
+
+    // Continue combining pairs until we get to the root
+    while (level.length > 1) {
+        const nextLevel: Uint8Array[] = [];
+
+        for (let i = 0; i < level.length; i += 2) {
+            let hashStr = createHash('sha256').update(Buffer.concat([level[i], level[i + 1]])).digest('hex');
+            nextLevel.push(new Uint8Array(Buffer.from(hashStr, 'hex')));
+        }
+
+        level = nextLevel;
+    }
+
+    return level[0];
+}
+
 /**
  * Get the proof for a data commitment for a specific block number on Avail against the data commitments posted by the VectorX contract.
  * Required query parameters:
@@ -380,6 +402,9 @@ export async function GET(req: NextRequest) {
             const additionalRoots = new Array(commitmentTreeSize - dataRoots.length).fill(new Uint8Array(32));
             dataRoots = dataRoots.concat(additionalRoots);
         }
+
+        // Compute the data commitment hash using dataRoots.
+        let expectedDataCommitment = computeDataCommitment(dataRoots, commitmentTreeSize);
 
         // Get the merkle branch for the requested block number by computing the Merkle tree branch
         // of the tree constructed from the data roots.

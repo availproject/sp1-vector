@@ -38,7 +38,8 @@ pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH]
     .unwrap()
 }
 
-/// Verify the encoded epoch end header is formatted correctly, and that the provided new pubkeys match the encoded ones.
+/// Verify the encoded epoch end header is formatted correctly, and that the supplied pubkeys match
+/// the pubkeys encoded in the header.
 pub fn verify_encoding_epoch_end_header(
     header_bytes: &[u8],
     start_cursor: usize,
@@ -61,7 +62,8 @@ pub fn verify_encoding_epoch_end_header(
     cursor += 6;
 
     // Decode the encoded scheduled change message length.
-    let (_, decoded_byte_length) = decode_scale_compact_int(&header_bytes[cursor..cursor + 5]);
+    let (_, decoded_byte_length) =
+        decode_scale_compact_int(header_bytes[cursor..cursor + 5].to_vec());
     cursor += decoded_byte_length;
 
     // Verify the next byte after encoded scheduled change message is scheduled change enum flags.
@@ -71,7 +73,7 @@ pub fn verify_encoding_epoch_end_header(
 
     // Decoded the encoded authority set size.
     let (authority_set_size, decoded_byte_length) =
-        decode_scale_compact_int(&header_bytes[cursor..cursor + 5]);
+        decode_scale_compact_int(header_bytes[cursor..cursor + 5].to_vec());
     assert_eq!(authority_set_size, num_authorities);
     cursor += decoded_byte_length;
 

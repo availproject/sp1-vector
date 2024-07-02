@@ -1,18 +1,48 @@
-use std::collections::HashMap;
-
-use avail_subxt::config::Header as HeaderTrait;
-use avail_subxt::{api, RpcParams};
-use codec::Encode;
+use avail_subxt::primitives::Header;
+use avail_subxt::RpcParams;
+use codec::Decode;
 use log::debug;
+use serde::de::Error;
+use serde::Deserialize;
 use services::aws::AWSClient;
 use services::input::RpcDataFetcher;
-use services::types::{GrandpaJustification, SignerMessage, StoredJustificationData};
-use sp_core::ed25519::{self};
-use sp_core::{blake2_256, Pair, H256};
+use services::types::{Commit, GrandpaJustification};
+use sp_core::bytes;
 use subxt::backend::rpc::RpcSubscription;
 
+/// The justification type that the Avail Subxt client returns for justifications. Needs a custom
+/// deserializer, so we can't use the equivalent `GrandpaJustification` type.
+#[derive(Clone, Debug, Decode)]
+pub struct AvailSubscriptionGrandpaJustification {
+    pub round: u64,
+    pub commit: Commit,
+    #[allow(dead_code)]
+    pub votes_ancestries: Vec<Header>,
+}
+
+impl From<AvailSubscriptionGrandpaJustification> for GrandpaJustification {
+    fn from(justification: AvailSubscriptionGrandpaJustification) -> GrandpaJustification {
+        GrandpaJustification {
+            round: justification.round,
+            commit: justification.commit,
+            votes_ancestries: justification.votes_ancestries,
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let encoded = bytes::deserialize(deserializer)?;
+        Self::decode(&mut &encoded[..])
+            .map_err(|codec_err| D::Error::custom(format!("Invalid decoding: {:?}", codec_err)))
+    }
+}
+
 async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClient) {
-    let sub: Result<RpcSubscription<GrandpaJustification>, _> = fetcher
+    let sub: Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, _> = fetcher
         .client
         .rpc()
         .subscribe(
@@ -30,113 +60,8 @@ async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClien
             justification.commit.target_number
         );
 
-        // Get the header corresponding to the new justification.
-        let header = fetcher
-            .client
-            .legacy_rpc()
-            .chain_get_header(Some(justification.commit.target_hash))
-            .await
-            .unwrap()
-            .unwrap();
-
-        // A bit redundant, but just to make sure the hash is correct. This confirms that the
-        // header encoding + block encoding match.
-        let block_hash = justification.commit.target_hash;
-        let header_hash = header.hash();
-        let calculated_hash: H256 = Encode::using_encoded(&header, blake2_256).into();
-        if header_hash != calculated_hash || block_hash != calculated_hash {
-            panic!("Header hash does not match block hash, avail-subxt crate is out of sync.");
-        }
-
-        // Get current authority set ID.
-        let set_id_key = api::storage().grandpa().current_set_id();
-        let authority_set_id = fetcher
-            .client
-            .storage()
-            .at(block_hash)
-            .fetch(&set_id_key)
-            .await
-            .unwrap()
-            .unwrap();
-
-        // Form a message which is signed in the justification.
-        let signed_message = Encode::encode(&(
-            &SignerMessage::PrecommitMessage(justification.commit.precommits[0].clone().precommit),
-            &justification.round,
-            &authority_set_id,
-        ));
-
-        // Verify all the signatures of the justification and extract the public keys. The ordering
-        // of the authority set will already be canonical and sorted in the justification on ID.
-
-        let validators = justification
-            .commit
-            .precommits
-            .iter()
-            .filter_map(|precommit| {
-                let is_ok = <ed25519::Pair as Pair>::verify(
-                    &precommit.clone().signature,
-                    signed_message.as_slice(),
-                    &precommit.clone().id,
-                );
-                if is_ok {
-                    Some((
-                        precommit.clone().id.0.to_vec(),
-                        precommit.clone().signature.0.to_vec(),
-                    ))
-                } else {
-                    None
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let pubkeys = validators.iter().map(|v| v.0.clone()).collect::<Vec<_>>();
-        let signatures = validators.iter().map(|v| v.1.clone()).collect::<Vec<_>>();
-
-        // Create map from pubkey to signature.
-        let mut pubkey_to_signature = HashMap::new();
-        for (pubkey, signature) in pubkeys.iter().zip(signatures.iter()) {
-            pubkey_to_signature.insert(pubkey.to_vec(), signature.to_vec());
-        }
-
-        // Check that more than 2/3 of the validators signed the justification.
-        // Note: Assumes the validator set have equal voting power.
-        let authorities = fetcher.get_authorities(header.number - 1).await;
-        let num_authorities = authorities.len();
-        let signed_count = pubkeys.len();
-        let required_signatures = (num_authorities * 2) / 3;
-        if signed_count <= required_signatures {
-            continue;
-        }
-
-        // Create justification data.
-        let mut justification_pubkeys = Vec::new();
-        let mut justification_signatures = Vec::new();
-        let mut validator_signed = Vec::new();
-        for authority_pubkey in authorities.iter() {
-            if let Some(signature) = pubkey_to_signature.get(authority_pubkey.0.as_slice()) {
-                justification_pubkeys.push(authority_pubkey.0.to_vec());
-                justification_signatures.push(signature.to_vec());
-                validator_signed.push(true);
-            } else {
-                justification_pubkeys.push(authority_pubkey.0.to_vec());
-                justification_signatures.push([0u8; 64].to_vec());
-                validator_signed.push(false);
-            }
-        }
-
-        // Add justification to DB.
-        let store_justification_data = StoredJustificationData {
-            block_number: header.number,
-            signed_message: signed_message.clone(),
-            pubkeys: justification_pubkeys,
-            signatures: justification_signatures,
-            num_authorities: authorities.len(),
-            validator_signed,
-        };
-
         aws_client
-            .add_justification(&fetcher.avail_chain_id, store_justification_data)
+            .add_justification(&fetcher.avail_chain_id, justification.into())
             .await
             .unwrap();
     }

@@ -6,13 +6,13 @@ use log::info;
 use serde_json::{from_str, to_string};
 use std::collections::HashMap;
 
-use crate::types::StoredJustificationData;
+use crate::types::GrandpaJustification;
 
 pub struct AWSClient {
     client: Client,
 }
 
-const JUSTIFICATION_TABLE: &str = "justifications";
+const JUSTIFICATION_TABLE: &str = "justifications-v2";
 
 impl AWSClient {
     pub async fn new() -> Self {
@@ -25,11 +25,11 @@ impl AWSClient {
     pub async fn add_justification(
         &self,
         avail_chain_id: &str,
-        justification: StoredJustificationData,
+        justification: GrandpaJustification,
     ) -> Result<()> {
         let json_data = to_string(&justification)?;
 
-        let block_nb = justification.block_number;
+        let block_nb = justification.commit.target_number;
         let key = format!("{}-{}", avail_chain_id, block_nb).to_lowercase();
 
         let item = HashMap::from([
@@ -53,7 +53,7 @@ impl AWSClient {
         &self,
         avail_chain_id: &str,
         block_number: u32,
-    ) -> Result<StoredJustificationData> {
+    ) -> Result<GrandpaJustification> {
         let key = format!("{}-{}", avail_chain_id, block_number).to_lowercase();
 
         let resp = self
@@ -67,7 +67,7 @@ impl AWSClient {
         if let Some(item) = resp.item {
             if let Some(data_attr) = item.get("data") {
                 if let Ok(data_json) = data_attr.as_s() {
-                    let data: StoredJustificationData = from_str(data_json)?;
+                    let data: GrandpaJustification = from_str(data_json)?;
                     return Ok(data);
                 }
             }

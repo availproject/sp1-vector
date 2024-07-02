@@ -11,8 +11,9 @@ use serde::{Deserialize, Serialize};
 /// bytes32 target_header_hash
 /// bytes32 state_root_commitment;
 /// bytes32 data_root_commitment;
+/// uint32 commitment_tree_size;
 pub type HeaderRangeOutputs = sol! {
-    tuple(uint32, bytes32, uint64, bytes32, uint32, bytes32, bytes32, bytes32)
+    tuple(uint32, bytes32, uint64, bytes32, uint32, bytes32, bytes32, bytes32, uint32)
 };
 
 /// uint64 current_authority_set_id;
@@ -45,7 +46,7 @@ impl ProofType {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RotateInputs {
     pub current_authority_set_id: u64,
     pub current_authority_set_hash: B256,
@@ -55,7 +56,7 @@ pub struct RotateInputs {
     pub header_rotate_data: HeaderRotateData,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 /// Data for the next set of authorities.
 pub struct HeaderRotateData {
     /// Encoded header bytes for the epoch end block.
@@ -67,7 +68,7 @@ pub struct HeaderRotateData {
     pub consensus_log_position: usize,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, Clone)]
 /// Justification data for an authority set.
 pub struct CircuitJustification {
     pub authority_set_id: u64,
@@ -92,6 +93,7 @@ pub struct HeaderRangeInputs {
     pub target_block: u32,
     pub merkle_tree_size: usize,
     pub encoded_headers: Vec<Vec<u8>>,
+    pub target_justification: CircuitJustification,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

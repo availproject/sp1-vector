@@ -7715,7 +7715,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sp-core",
- "sp1-vectorx-primitives",
+ "sp1-vector-primitives",
  "subxt",
  "tokio",
 ]
@@ -8927,7 +8927,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "sp1-vectorx-primitives"
+name = "sp1-vector-primitives"
 version = "0.1.0"
 dependencies = [
  "alloy-primitives",
@@ -8954,7 +8954,7 @@ dependencies = [
  "services",
  "sp1-helper",
  "sp1-sdk",
- "sp1-vectorx-primitives",
+ "sp1-vector-primitives",
  "tokio",
 ]
 

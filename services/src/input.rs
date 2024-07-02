@@ -1,9 +1,9 @@
 use anyhow::Result;
-use sp1_vectorx_primitives::merkle::get_merkle_tree_size;
-use sp1_vectorx_primitives::types::{
+use sp1_vector_primitives::merkle::get_merkle_tree_size;
+use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, RotateInputs,
 };
-use sp1_vectorx_primitives::{
+use sp1_vector_primitives::{
     compute_authority_set_commitment, consts::HASH_SIZE, verify_encoded_validators,
     verify_signature,
 };
@@ -13,10 +13,7 @@ use std::collections::HashMap;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
 
-use crate::types::{
-    EncodedFinalityProof, FinalityProof, GrandpaJustification, SignerMessage,
-    StoredJustificationData,
-};
+use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification, SignerMessage};
 use alloy_primitives::{B256, B512};
 use avail_subxt::avail_client::AvailClient;
 use avail_subxt::config::substrate::DigestItem;
@@ -27,10 +24,12 @@ use futures::future::join_all;
 use sp_core::ed25519;
 use subxt::config::Header as SubxtHeader;
 
+/// An RPC data fetcher for fetching data for VectorX. The vectorx_query_url is only necessary when
+/// querying justifications.
 pub struct RpcDataFetcher {
     pub client: AvailClient,
     pub avail_chain_id: String,
-    pub vectorx_query_url: String,
+    pub vectorx_query_url: Option<String>,
 }
 
 impl RpcDataFetcher {
@@ -38,10 +37,9 @@ impl RpcDataFetcher {
         dotenv::dotenv().ok();
 
         let url = env::var("AVAIL_URL").expect("AVAIL_URL must be set");
-        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
         let client = AvailClient::new(url.as_str()).await.unwrap();
-        let vectorx_query_url =
-            env::var("VECTORX_QUERY_URL").expect("VECTORX_QUERY_URL must be set");
+        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
+        let vectorx_query_url = env::var("VECTORX_QUERY_URL").ok();
         RpcDataFetcher {
             client,
             avail_chain_id,
@@ -49,38 +47,68 @@ impl RpcDataFetcher {
         }
     }
 
-    /// Gets a justification from the vectorx-query service.
-    pub async fn get_justification(
-        &self,
-        avail_chain_id: &str,
-        block_number: u32,
-    ) -> Result<StoredJustificationData> {
-        let base_justification_query_url = format!("{}/api/justification", self.vectorx_query_url);
+    /// Gets a justification from the vectorx-query service, which reads the data from the AWS DB.
+    pub async fn get_justification(&self, block_number: u32) -> Result<GrandpaJustification> {
+        if self.vectorx_query_url.is_none() {
+            return Err(anyhow::anyhow!("VECTORX_QUERY_URL must be set"));
+        }
+
+        let base_justification_query_url = format!(
+            "{}/api/justification",
+            self.vectorx_query_url.as_ref().unwrap()
+        );
 
         let request_url = format!(
             "{}?availChainId={}&blockNumber={}",
-            base_justification_query_url, avail_chain_id, block_number
+            base_justification_query_url, self.avail_chain_id, block_number
         );
 
         let response = reqwest::get(request_url).await?;
         let json_response = response.json::<serde_json::Value>().await?;
+
+        // If the service does not have a justification associated with the block, return an error.
+        // The response will have the following form:
+        // {
+        //     "success": false
+        //     "error": "No justification found."
+        // }
+        let is_success = json_response.get("success").unwrap().as_bool().unwrap();
+        if !is_success {
+            return Err(anyhow::anyhow!(
+                "No justification found for the specified block number."
+            ));
+        }
+
+        // If the service does have a justification, it should have the following form:
+        // {
+        //     "success": true,
+        //     "justification": {
+        //         "S": "<justification as string>"
+        //     }
+        // }
         let justification_str = json_response
             .get("justification")
-            .ok_or_else(|| anyhow::anyhow!("Justification field missing"))?
+            .ok_or_else(|| anyhow::anyhow!("Justification field missing"))
+            .expect("Justification field should be present")
             .get("S")
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))?
+            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
+            .expect("Justification field should be a string")
             .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))?;
-        let justification_data =
-            serde_json::from_str::<StoredJustificationData>(justification_str)?;
+            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
+            .expect("Justification field should be a string");
+        let justification_data: GrandpaJustification =
+            serde_json::from_str(justification_str).expect("Couldn't deserialize!");
 
         Ok(justification_data)
     }
 
+    /// Get the inputs for a header range proof. Optionally pass in the header range commitment tree size.
+    /// If not passed in, it will be set to the nearest power of 2.
     pub async fn get_header_range_inputs(
         &self,
         trusted_block: u32,
         target_block: u32,
+        header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
         let trusted_header = self.get_header(trusted_block).await;
         let trusted_header_hash: alloy_primitives::FixedBytes<32> =
@@ -89,13 +117,28 @@ impl RpcDataFetcher {
             self.get_authority_set_data_for_block(trusted_block).await;
 
         let num_headers = target_block - trusted_block + 1;
-        // TODO: Should be fetched from the contract when we take this to production.
-        let merkle_tree_size = get_merkle_tree_size(num_headers);
+        let merkle_tree_size: usize;
+        if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
+            assert!(
+                header_range_commitment_tree_size >= num_headers
+                    && header_range_commitment_tree_size.is_power_of_two(),
+                "Header range commitment tree size must be greater than or equal to the number of headers and a power of two"
+            );
+            merkle_tree_size = header_range_commitment_tree_size as usize;
+        } else {
+            // NOTE: DANGEROUS. ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
+            merkle_tree_size = get_merkle_tree_size(num_headers);
+        }
 
         let headers = self
             .get_block_headers_range(trusted_block, target_block)
             .await;
         let encoded_headers: Vec<Vec<u8>> = headers.iter().map(|header| header.encode()).collect();
+
+        let (target_justification, _) = self
+            .get_justification_data_for_block(target_block)
+            .await
+            .expect("Failed to get justification data for target block.");
 
         HeaderRangeInputs {
             trusted_block,
@@ -105,6 +148,7 @@ impl RpcDataFetcher {
             authority_set_id,
             merkle_tree_size,
             encoded_headers,
+            target_justification,
         }
     }
 
@@ -355,57 +399,19 @@ impl RpcDataFetcher {
         &self,
         block_number: u32,
     ) -> Option<(CircuitJustification, Header)> {
-        // Note: The db justification type is from VectorX, and we need to map it onto the
-        // CircuitJustification SP1 VectorX type.
-        let stored_justification = self
-            .get_justification(&self.avail_chain_id, block_number)
-            .await;
+        let grandpa_justification = self.get_justification(block_number).await;
 
-        if stored_justification.is_err() {
+        if grandpa_justification.is_err() {
             return None;
         }
+        let grandpa_justification = grandpa_justification.unwrap();
 
-        let stored_justification = stored_justification.unwrap();
-
-        let block_hash = self.get_block_hash(stored_justification.block_number).await;
-
-        let authority_set_id = self
-            .get_authority_set_id(stored_justification.block_number - 1)
-            .await;
-        let authority_set_hash = self
-            .compute_authority_set_hash_for_block(stored_justification.block_number - 1)
-            .await;
-        let header = self.get_header(stored_justification.block_number).await;
-
-        // Convert pubkeys from DB into [u8; 32]
-        let pubkeys: Vec<B256> = stored_justification
-            .pubkeys
-            .iter()
-            .map(|pubkey| B256::from_slice(pubkey.clone().as_slice()))
-            .collect();
-
-        let mut signatures: Vec<Option<B512>> = Vec::new();
-        for i in 0..stored_justification.signatures.len() {
-            if stored_justification.validator_signed[i] {
-                signatures.push(Some(B512::from_slice(
-                    stored_justification.signatures[i].clone().as_slice(),
-                )));
-            } else {
-                signatures.push(None);
-            }
-        }
+        let header = self.get_header(block_number).await;
 
         // Convert DB stored justification into CircuitJustification.
-        let circuit_justification = CircuitJustification {
-            signed_message: stored_justification.signed_message,
-            authority_set_id,
-            current_authority_set_hash: authority_set_hash,
-            pubkeys,
-            signatures,
-            num_authorities: stored_justification.num_authorities,
-            block_number: stored_justification.block_number,
-            block_hash,
-        };
+        let circuit_justification = self
+            .compute_data_from_justification(grandpa_justification, block_number)
+            .await;
         Some((circuit_justification, header))
     }
 
@@ -550,7 +556,7 @@ impl RpcDataFetcher {
 #[cfg(test)]
 mod tests {
     use avail_subxt::config::Header;
-    use sp1_vectorx_primitives::decode_precommit;
+    use sp1_vector_primitives::decode_and_verify_precommit;
 
     use super::*;
 
@@ -662,7 +668,7 @@ mod tests {
             &authority_set_id,
         ));
 
-        let (_, block_number, _, _) = decode_precommit(signed_message.clone());
+        let (_, block_number, _, _) = decode_and_verify_precommit(signed_message.clone());
 
         println!("block number {:?}", block_number);
     }

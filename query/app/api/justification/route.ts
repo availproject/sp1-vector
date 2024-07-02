@@ -1,7 +1,7 @@
 import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { NextRequest, NextResponse } from 'next/server';
 
-const tableName = 'justifications';
+const tableName = 'justifications-v2';
 
 /** Get the justification for a given Avail block.
  * - blockNumber: The block number of the Avail block.

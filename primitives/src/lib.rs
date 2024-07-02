@@ -1,3 +1,4 @@
+use codec::{Compact, Decode, Encode};
 use ed25519_consensus::{Signature, VerificationKey};
 
 use types::CircuitJustification;
@@ -11,12 +12,12 @@ pub mod rotate;
 use alloy_primitives::B256;
 use consts::{PUBKEY_LENGTH, VALIDATOR_LENGTH};
 
-/// This function is useful for verifying that a Ed25519 signature is valid, it will panic if the signature is not valid.
+/// Verify that a Ed25519 signature is valid. Panics if the signature is not valid.
 pub fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature: [u8; 64]) {
     let pubkey: VerificationKey = VerificationKey::try_from(pubkey_bytes).unwrap();
     let verified = pubkey.verify(&Signature::from(signature), signed_message);
     if verified.is_err() {
-        panic!("Signature is not valid");
+        panic!("Failed to verify Ed25519 signature.");
     }
 }
 
@@ -36,14 +37,14 @@ pub fn verify_simple_justification(
     // a) Decode precommit.
     // b) Check that values from the decoded precommit match the passed in block number, block hash and authority_set_id.
     let (signed_block_hash, signed_block_number, _, signed_authority_set_id) =
-        decode_precommit(justification.signed_message.clone());
+        decode_and_verify_precommit(justification.signed_message.clone());
     assert_eq!(signed_block_hash, justification.block_hash);
     assert_eq!(signed_block_number, justification.block_number);
     assert_eq!(signed_authority_set_id, authority_set_id);
 
     // 3. Check that the signed message is signed by the correct authority.
     // Must have at least 2/3 of the signatures to verify the justification.
-    let threshold = (justification.pubkeys.len() * 2).div_ceil(3);
+    let threshold = ((justification.pubkeys.len() * 2) + 1).div_ceil(3);
     let mut verified_signatures = 0;
 
     for i in 0..justification.pubkeys.len() {
@@ -57,19 +58,19 @@ pub fn verify_simple_justification(
             verified_signatures += 1;
 
             // Exit the loop early if more than 2/3 of signatures are verified.
-            if verified_signatures > threshold {
+            if verified_signatures >= threshold {
                 break;
             }
         }
     }
 
     assert!(
-        verified_signatures > threshold,
+        verified_signatures >= threshold,
         "Less than 2/3 of signatures are verified"
     );
 }
 
-/// Compute the new authority set hash.
+/// Compute the new authority set hash from the encoded pubkeys.
 pub fn compute_authority_set_commitment(pubkeys: &[B256]) -> B256 {
     let mut commitment_so_far = Sha256::digest(pubkeys[0]).to_vec();
     for pubkey in pubkeys.iter().skip(1) {
@@ -81,7 +82,8 @@ pub fn compute_authority_set_commitment(pubkeys: &[B256]) -> B256 {
     B256::from_slice(&commitment_so_far)
 }
 
-pub fn decode_precommit(precommit: Vec<u8>) -> ([u8; 32], u32, u64, u64) {
+/// Manually decode the precommit message from bytes and verify it is encoded correctly.
+pub fn decode_and_verify_precommit(precommit: Vec<u8>) -> ([u8; 32], u32, u64, u64) {
     // The first byte should be a 1.
     assert_eq!(precommit[0], 1);
 
@@ -106,53 +108,11 @@ pub fn decode_precommit(precommit: Vec<u8>) -> ([u8; 32], u32, u64, u64) {
     (block_hash, block_number, round, authority_set_id)
 }
 
-/// Decode a SCALE-encoded compact int.
-pub fn decode_scale_compact_int(bytes: &[u8]) -> (u64, usize) {
-    if bytes.is_empty() {
-        panic!("Input bytes are empty");
-    }
-
-    let first_byte = bytes[0];
-    let flag = first_byte & 0b11;
-
-    match flag {
-        0b00 => {
-            // Single-byte mode
-            (u64::from(first_byte >> 2), 1)
-        }
-        0b01 => {
-            // Two-byte mode
-            if bytes.len() < 2 {
-                panic!("Not enough bytes for two-byte mode");
-            }
-            let value = (u64::from(first_byte) >> 2) | (u64::from(bytes[1]) << 6);
-            (value, 2)
-        }
-        0b10 => {
-            // Four-byte mode
-            if bytes.len() < 4 {
-                panic!("Not enough bytes for four-byte mode");
-            }
-            let value = (u64::from(first_byte) >> 2)
-                | (u64::from(bytes[1]) << 6)
-                | (u64::from(bytes[2]) << 14)
-                | (u64::from(bytes[3]) << 22);
-            (value, 4)
-        }
-        0b11 => {
-            // Big integer mode
-            let byte_count = ((first_byte >> 2) + 4) as usize;
-            if bytes.len() < byte_count + 1 {
-                panic!("Not enough bytes for big integer mode");
-            }
-            let mut value = 0u64;
-            for i in 0..byte_count {
-                value |= (u64::from(bytes[i + 1])) << (i * 8);
-            }
-            (value, byte_count + 1)
-        }
-        _ => unreachable!(),
-    }
+/// Decode a SCALE-encoded compact int and get the value and the number of bytes it took to encode.
+pub fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
+    let value = Compact::<u64>::decode(&mut bytes.as_slice())
+        .expect("Failed to decode SCALE-encoded compact int.");
+    (value.into(), value.encoded_size())
 }
 
 /// Verify that the encoded validators match the provided pubkeys, have the correct weight, and the delay is zero.
@@ -163,6 +123,7 @@ pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubke
         // Assert that the extracted pubkey matches the expected pubkey.
         assert_eq!(extracted_pubkey, *pubkey);
         let extracted_weight = &header_bytes[cursor + PUBKEY_LENGTH..cursor + VALIDATOR_LENGTH];
+
         // All validating voting weights in Avail are 1.
         assert_eq!(extracted_weight, &[1u8, 0, 0, 0, 0, 0, 0, 0]);
         cursor += VALIDATOR_LENGTH;
@@ -194,7 +155,7 @@ mod tests {
         let encoded_nums: Vec<Vec<u8>> = nums.iter().map(|num| Compact(*num).encode()).collect();
         let zipped: Vec<(&Vec<u8>, &u32)> = encoded_nums.iter().zip(nums.iter()).collect();
         for (encoded_num, num) in zipped {
-            let (value, _) = decode_scale_compact_int(encoded_num);
+            let (value, _) = decode_scale_compact_int(encoded_num.to_vec());
             assert_eq!(value, *num as u64);
         }
     }
