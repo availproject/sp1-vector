@@ -407,7 +407,7 @@ impl VectorXOperator {
     async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
         let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let proof_as_bytes = hex::decode(&proof.proof.encoded_proof)?;
+        let proof_as_bytes = proof.bytes();
 
         let gas_limit = relay::get_gas_limit(self.chain_id);
         let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
