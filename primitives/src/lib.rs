@@ -1,7 +1,9 @@
+use std::collections::HashMap;
 use codec::{Compact, Decode, Encode};
 use ed25519_consensus::{Signature, VerificationKey};
-
+use header_range::hash_encoded_header;
 use types::CircuitJustification;
+use itertools::Itertools;
 
 pub mod merkle;
 pub mod types;
@@ -21,6 +23,44 @@ pub fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature
     }
 }
 
+/// Helper function for finding subslice in the slice
+fn is_containing<T: PartialEq>(haystack: &[T], needle: &[T]) -> bool {
+    haystack.windows(needle.len()).any(|c| c == needle)
+}
+
+/// Confirm ancestry of a child block by traversing the ancestry_map until root_hash is reached.
+fn confirm_ancestry(
+    child_hash: &B256,
+    root_hash: &B256,
+    ancestry_map: &HashMap<B256, B256>,
+) -> bool {
+    if child_hash == root_hash {
+        return true;
+    }
+
+    let mut curr_hash = child_hash;
+
+    // We should be able to test it in at most ancestry_map.len() passes
+    for _ in 0..ancestry_map.len() {
+        if let Some(parent_hash) = ancestry_map.get(curr_hash) {
+            if parent_hash == root_hash {
+                return true;
+            }
+            curr_hash = parent_hash;
+        } else {
+            return false;
+        }
+    }
+
+    false
+}
+
+/// Helper function for determining if supermajority is achieved
+fn is_signed_by_supermajority(num_signatures: usize, validator_set_size: usize) -> bool {
+    let supermajority = (validator_set_size * 2 / 3) + 1;
+    num_signatures >= supermajority
+}
+
 /// Verify a simple justification on a block from the specified authority set.
 pub fn verify_simple_justification(
     justification: CircuitJustification,
@@ -33,39 +73,55 @@ pub fn verify_simple_justification(
         current_authority_set_hash
     );
 
-    // 2. Check encoding of precommit mesage.
-    // a) Decode precommit.
-    // b) Check that values from the decoded precommit match the passed in block number, block hash and authority_set_id.
-    let (signed_block_hash, signed_block_number, _, signed_authority_set_id) =
-        decode_and_verify_precommit(justification.signed_message.clone());
-    assert_eq!(signed_block_hash, justification.block_hash);
-    assert_eq!(signed_block_number, justification.block_number);
-    assert_eq!(signed_authority_set_id, authority_set_id);
+    assert_eq!(justification.authority_set_id, authority_set_id);
 
-    // 3. Check that the signed message is signed by the correct authority.
-    // Must have at least 2/3 of the signatures to verify the justification.
-    let threshold = ((justification.pubkeys.len() * 2) + 1).div_ceil(3);
-    let mut verified_signatures = 0;
-
-    for i in 0..justification.pubkeys.len() {
-        if let Some(signature) = &justification.signatures[i] {
-            let signature: [u8; 64] = signature.as_slice().try_into().unwrap();
-            verify_signature(
-                justification.pubkeys[i].0,
-                &justification.signed_message,
-                signature,
+    // Form an ancestry map from votes_ancestries in the justification. This maps header hashes to their parents' hashes.
+    // Since we only get encoded headers, ensure that the parent is contained in the encoded header, no need to decode it.
+    let ancestry_map: HashMap<B256, B256> = justification
+        .ancestries_encoded
+        .iter()
+        .map(|(parent_hash, encoded_header)| {
+            // The encoded Header also contains the hash of the parent and isn't altered by the encoding
+            assert!(
+                is_containing(encoded_header, parent_hash.as_slice()),
+                "Parent hash isn't contained in the encoder header"
             );
-            verified_signatures += 1;
+            let header_hash = hash_encoded_header(encoded_header);
 
-            // Exit the loop early if more than 2/3 of signatures are verified.
-            if verified_signatures >= threshold {
-                break;
-            }
-        }
-    }
+            (header_hash, parent_hash.to_owned())
+        })
+        .collect();
+
+    let (_failed_verifications, signer_addresses): (Vec<_>, Vec<_>) =
+        justification.precommits.iter().partition_map(|p| {
+            // form a message which is signed in the Justification, it's a combination of a Precommit,
+            // round number and set_id (taken from Substrate code)
+            let signed_message = Encode::encode(&(
+                1u8,
+                p.target_hash.0,
+                p.target_number,
+                &justification.round,
+                &justification.authority_set_id, // Set ID is needed here.
+            ));
+
+            verify_signature(p.pubkey.0, &signed_message, p.signature.0);
+
+            let ancestry =
+                confirm_ancestry(&p.target_hash, &justification.block_hash, &ancestry_map);
+            ancestry
+                .then_some(p.pubkey)
+                .ok_or((p.pubkey, justification.clone()))
+                .into()
+        });
+
+    // match all the Signer addresses to the Current Validator Set
+    let num_matched_addresses = signer_addresses
+        .iter()
+        .filter(|x| justification.valset_pubkeys.iter().any(|e| e.0.eq(&x[..])))
+        .count();
 
     assert!(
-        verified_signatures >= threshold,
+        is_signed_by_supermajority(num_matched_addresses, justification.valset_pubkeys.len()),
         "Less than 2/3 of signatures are verified"
     );
 }
@@ -134,9 +190,13 @@ pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubke
 
 #[cfg(test)]
 mod tests {
-    use codec::{Compact, Encode};
-
     use super::*;
+    use avail_subxt::api::runtime_types::avail_core::header::extension::v3::HeaderExtension;
+    use avail_subxt::api::runtime_types::avail_core::header::extension::HeaderExtension::V3;
+    use avail_subxt::config::substrate::Digest;
+    use avail_subxt::primitives::Header as DaHeader;
+    use codec::{Compact, Encode};
+    use primitive_types::H256;
 
     #[test]
     fn test_decode_scale_compact_int() {
@@ -158,5 +218,27 @@ mod tests {
             let (value, _) = decode_scale_compact_int(encoded_num.to_vec());
             assert_eq!(value, *num as u64);
         }
+    }
+
+    #[test]
+    fn test_header_encoding_preserves_parent() {
+        let hash = H256::random();
+        let some_other_hash = H256::random();
+        let h = DaHeader {
+            parent_hash: hash,
+            number: 1,
+            state_root: H256::zero(),
+            extrinsics_root: H256::zero(),
+            extension: V3(HeaderExtension {
+                ..Default::default()
+            }),
+            digest: Digest {
+                ..Default::default()
+            },
+        };
+
+        let encoded = h.encode();
+        assert!(is_containing(&encoded, &hash.0));
+        assert!(!is_containing(&encoded, &some_other_hash.0))
     }
 }

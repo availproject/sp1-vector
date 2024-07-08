@@ -8934,6 +8934,7 @@ dependencies = [
  "alloy-sol-types",
  "blake2",
  "ed25519-consensus",
+ "itertools 0.10.5",
  "parity-scale-codec",
  "serde",
  "sha2 0.10.8",

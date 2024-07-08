@@ -1,19 +1,17 @@
 use anyhow::Result;
 use sp1_vector_primitives::merkle::get_merkle_tree_size;
 use sp1_vector_primitives::types::{
-    CircuitJustification, HeaderRangeInputs, HeaderRotateData, RotateInputs,
+    CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
 use sp1_vector_primitives::{
     compute_authority_set_commitment, consts::HASH_SIZE, verify_encoded_validators,
-    verify_signature,
 };
 use sp_core::H256;
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
 
-use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification, SignerMessage};
+use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
 use alloy_primitives::{B256, B512};
 use avail_subxt::avail_client::AvailClient;
 use avail_subxt::config::substrate::DigestItem;
@@ -340,58 +338,14 @@ impl RpcDataFetcher {
         block_number: u32,
     ) -> CircuitJustification {
         // Get the authority set that attested to block_number.
-        let (authority_set_id, authority_set_hash) = self
+        let (authority_set_id, _authority_set_hash) = self
             .get_authority_set_data_for_block(block_number - 1)
             .await;
 
-        // Form a message which is signed in the justification.
-        let signed_message = Encode::encode(&(
-            &SignerMessage::PrecommitMessage(justification.commit.precommits[0].clone().precommit),
-            &justification.round,
-            &authority_set_id,
-        ));
-
-        // List of valid pubkeys to signatures from the justification.
-        let mut pubkey_to_signature = HashMap::new();
-        for precommit in justification.commit.precommits {
-            let pubkey = precommit.clone().id;
-            let signature = precommit.clone().signature.0;
-            let pubkey_bytes = pubkey.0;
-
-            // Verify the signature by this validator over the signed_message which is shared.
-            verify_signature(pubkey_bytes, &signed_message, signature);
-
-            pubkey_to_signature.insert(
-                precommit.clone().id.0,
-                B512::from(precommit.clone().signature.0),
-            );
-        }
-
         // Get the authority set for the block number.
         let authorities = self.get_authorities(block_number - 1).await;
-        let num_authorities = authorities.len();
 
-        let mut signatures = Vec::new();
-        for authority in authorities.clone() {
-            signatures.push(pubkey_to_signature.get(&authority.0).cloned());
-        }
-        // Total votes is the total number of entries in pubkey_to_signature.
-        let total_votes = pubkey_to_signature.len();
-        if total_votes * 3 < num_authorities * 2 {
-            panic!("Not enough voting power");
-        }
-
-        let block_hash = self.get_block_hash(block_number).await;
-        CircuitJustification {
-            signed_message,
-            authority_set_id,
-            current_authority_set_hash: authority_set_hash,
-            pubkeys: authorities.clone(),
-            signatures,
-            num_authorities,
-            block_number,
-            block_hash,
-        }
+        grandpa_and_valset_to_circuit(justification, authorities, authority_set_id)
     }
 
     /// Get the justification for a block using the DB cache from the justification indexer.
@@ -553,10 +507,54 @@ impl RpcDataFetcher {
     }
 }
 
+/// Converts GrandpaJustification and validator set to CircuitJustification
+pub fn grandpa_and_valset_to_circuit(
+    justification: GrandpaJustification,
+    validator_set: Vec<B256>,
+    set_id: u64,
+) -> CircuitJustification {
+    let precommits = justification
+        .commit
+        .precommits
+        .iter()
+        .map(|e| Precommit {
+            target_number: e.precommit.target_number,
+            target_hash: B256::from(e.precommit.target_hash.0),
+            pubkey: B256::from(e.id.0),
+            signature: B512::from(e.signature.0),
+        })
+        .collect::<Vec<_>>();
+
+    let ancestries_encoded = justification
+        .votes_ancestries
+        .iter()
+        .map(|e| (B256::from(e.parent_hash.0), e.encode()))
+        .collect::<Vec<_>>();
+    let current_authority_set_hash = compute_authority_set_commitment(&validator_set[..]);
+
+    CircuitJustification {
+        round: justification.round,
+        authority_set_id: set_id,
+        valset_pubkeys: validator_set.clone(),
+        precommits,
+        current_authority_set_hash,
+        block_number: justification.commit.target_number,
+        block_hash: justification.commit.target_hash.0.into(),
+        ancestries_encoded,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use avail_subxt::config::Header;
-    use sp1_vector_primitives::decode_and_verify_precommit;
+    use avail_subxt::primitives::Header as DaHeader;
+    use ed25519::Public;
+    use serde::{Deserialize, Serialize};
+    use sp1_vector_primitives::{decode_and_verify_precommit, verify_simple_justification};
+    use std::fs::File;
+    use test_case::test_case;
+
+    use crate::types::{Commit, Precommit};
 
     use super::*;
 
@@ -671,5 +669,94 @@ mod tests {
         let (_, block_number, _, _) = decode_and_verify_precommit(signed_message.clone());
 
         println!("block number {:?}", block_number);
+    }
+
+    #[test]
+    fn test_signed_message_encoding() {
+        let h1 = H256::random();
+        let h2 = H256::random();
+
+        // Cannonical way of forming the signed message (taken from Substrate code)
+        let msg1 = Encode::encode(&(
+            &SignerMessage::PrecommitMessage(Precommit {
+                target_hash: h1,
+                target_number: 2,
+            }),
+            3u64,
+            4u64,
+        ));
+
+        // Simplified encoding using none of the Substrate-specific structures
+        let msg2 = Encode::encode(&(1u8, B256::from(h1.0).0, 2u32, 3u64, 4u64));
+        assert_eq!(msg1, msg2, "Messages are not equal")
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct JsonGrandpaJustification {
+        pub round: u64,
+        pub commit: Commit,
+        pub votes_ancestries: Vec<DaHeader>,
+    }
+
+    impl From<GrandpaJustification> for JsonGrandpaJustification {
+        fn from(value: GrandpaJustification) -> Self {
+            Self {
+                round: value.round,
+                commit: value.commit,
+                votes_ancestries: value.votes_ancestries,
+            }
+        }
+    }
+
+    impl Into<GrandpaJustification> for JsonGrandpaJustification {
+        fn into(self) -> GrandpaJustification {
+            GrandpaJustification {
+                round: self.round,
+                commit: self.commit,
+                votes_ancestries: self.votes_ancestries,
+            }
+        }
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct ValidatorSet {
+        pub set_id: u64,
+        pub validator_set: Vec<Public>,
+    }
+
+    #[derive(Clone, Debug, Serialize, Deserialize)]
+    pub struct ValidatorSetAndJustification {
+        pub validator_set: ValidatorSet,
+        pub justification: JsonGrandpaJustification,
+    }
+
+    #[test_case("test_assets/ancestry.json"; "Complex ancestry")]
+    #[test_case("test_assets/ancestry_missing_link_no_majority.json" => panics "Less than 2/3 of signatures are verified"; "Missing ancestor negative case")]
+    #[test_case("test_assets/ancestry_missing_link_works.json"; "Missing ancestor")]
+    /// Tesing some complex justifications, serialized in JSON format (for readability)
+    fn test_complex_justification(path: &str) {
+        let test_case_file = File::open(path).unwrap();
+        let validator_set_and_justification: ValidatorSetAndJustification =
+            serde_json::from_reader(test_case_file).unwrap();
+
+        let justification: GrandpaJustification =
+            validator_set_and_justification.justification.into();
+        let validator_set = validator_set_and_justification
+            .validator_set
+            .validator_set
+            .iter()
+            .map(|e| B256::from(e.0))
+            .collect::<Vec<_>>();
+        let circuit_justification = grandpa_and_valset_to_circuit(
+            justification,
+            validator_set,
+            validator_set_and_justification.validator_set.set_id,
+        );
+
+        verify_simple_justification(
+            circuit_justification.clone(),
+            validator_set_and_justification.validator_set.set_id,
+            circuit_justification.current_authority_set_hash,
+        )
     }
 }

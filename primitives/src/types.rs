@@ -69,19 +69,38 @@ pub struct HeaderRotateData {
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
+/// Signature of a particular validator targeting a specific block
+/// (may not be the same as justification's target block)
+pub struct Precommit {
+    /// Target block number
+    pub target_number: u32,
+    /// Target block hash
+    pub target_hash: B256,
+    /// Signer public key
+    pub pubkey: B256,
+    /// Signature of the precommit
+    pub signature: B512,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
 /// Justification data for an authority set.
 pub struct CircuitJustification {
+    /// Commit round
+    pub round: u64,
+    /// Set ID of authority set
     pub authority_set_id: u64,
-    /// Message signed by authority set.
-    pub signed_message: Vec<u8>,
-    pub pubkeys: Vec<B256>,
-    pub signatures: Vec<Option<B512>>,
-    pub num_authorities: usize,
+    /// All authority set public keys
+    pub valset_pubkeys: Vec<B256>,
+    /// Precommits containing signatures of a subset of authority set
+    pub precommits: Vec<Precommit>,
+    /// Hash of authority set
     pub current_authority_set_hash: B256,
     /// Block number associated with the justification.
     pub block_number: u32,
     /// Hash of the block associated with the justification.
     pub block_hash: B256,
+    /// Vector of pairs of (parent_hash, encoded_header) needed to prove precommit target ancestry
+    pub ancestries_encoded: Vec<(B256, Vec<u8>)>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

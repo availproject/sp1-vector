@@ -425,7 +425,7 @@ dependencies = [
 [[package]]
 name = "curve25519-dalek-ng"
 version = "4.1.1"
-source = "git+https://github.com/sp1-patches/curve25519-dalek-ng.git#01f43665631d2c33385708d41d0c26dbb1baa0ea"
+source = "git+https://github.com/sp1-patches/curve25519-dalek-ng.git?branch=patch-v4.1.1#f5607edd61ad8e9d80c9be933cd119f4008044d9"
 dependencies = [
  "byteorder",
  "digest 0.9.0",
@@ -512,7 +512,7 @@ dependencies = [
 [[package]]
 name = "ed25519-consensus"
 version = "2.1.0"
-source = "git+https://github.com/sp1-patches/ed25519-consensus?branch=patch-v2.1.0#59f16610526726fa5c96dd77ca792f821021b66e"
+source = "git+https://github.com/sp1-patches/ed25519-consensus?branch=patch-v2.1.0#4fba9b0acc9fcf7a87d00da84c340d5988e3d7cb"
 dependencies = [
  "curve25519-dalek-ng",
  "hex",
@@ -1263,7 +1263,7 @@ dependencies = [
 [[package]]
 name = "sha2"
 version = "0.10.8"
-source = "git+https://github.com/sp1-patches/RustCrypto-hashes?branch=patch-v0.10.8#3d692aa90b91513886d757d01f8fc2d51c0ec0d7"
+source = "git+https://github.com/sp1-patches/RustCrypto-hashes?branch=patch-v0.10.8#1f224388fdede7cef649bce0d63876d1a9e3f515"
 dependencies = [
  "cfg-if",
  "cpufeatures",
@@ -1325,6 +1325,7 @@ dependencies = [
  "alloy-sol-types",
  "blake2",
  "ed25519-consensus",
+ "itertools",
  "parity-scale-codec",
  "serde",
  "sha2 0.10.8",
