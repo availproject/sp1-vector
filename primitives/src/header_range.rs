@@ -8,6 +8,16 @@ use crate::types::{DecodedHeaderData, HeaderRangeInputs, HeaderRangeOutputs};
 use crate::{decode_scale_compact_int, verify_simple_justification};
 use alloy_sol_types::SolType;
 
+pub fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
+    const DIGEST_SIZE: usize = 32;
+    let mut hasher = Blake2bVar::new(DIGEST_SIZE).unwrap();
+    hasher.update(encoded_header);
+
+    let mut digest_bytes = [0u8; DIGEST_SIZE];
+    let _ = hasher.finalize_variable(&mut digest_bytes);
+    B256::from(digest_bytes)
+}
+
 /// Verify the justification from the current authority set on target block and compute the
 /// state and data root commitments over the range [trusted_block + 1, target_block] inclusive.
 pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADER_OUTPUTS_LENGTH] {

@@ -12,3 +12,8 @@ codec = { package = "parity-scale-codec", version = "3", default-features = fals
 alloy-primitives = { version = "0.7.5", features = ["serde"] }
 alloy-sol-types = "0.7.5"
 blake2 = "0.10.6"
+itertools = "0.10.5"
+
+[dev-dependencies]
+primitive-types = "0.12.2"
+avail-subxt = { git = "https://github.com/availproject/avail.git", tag = "v2.2.2.0-rc1" }

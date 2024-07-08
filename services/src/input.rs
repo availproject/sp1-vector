@@ -353,7 +353,7 @@ impl RpcDataFetcher {
 
         // List of valid pubkeys to signatures from the justification.
         let mut pubkey_to_signature = HashMap::new();
-        for precommit in justification.commit.precommits {
+        for precommit in justification.commit.precommits.clone() {
             let pubkey = precommit.clone().id;
             let signature = precommit.clone().signature.0;
             let pubkey_bytes = pubkey.0;
@@ -381,16 +381,37 @@ impl RpcDataFetcher {
             panic!("Not enough voting power");
         }
 
+        let precommits = justification
+            .commit
+            .precommits
+            .iter()
+            .map(|e| {
+                (
+                    e.precommit.target_number,
+                    B256::from(e.precommit.target_hash.0),
+                    B256::from(e.id.0),
+                    B512::from(e.signature.0),
+                )
+            })
+            .collect::<Vec<_>>();
+
+        let ancestries_encoded = justification
+            .votes_ancestries
+            .iter()
+            .map(|e| (B256::from(e.parent_hash.0), e.encode()))
+            .collect::<Vec<_>>();
+
         let block_hash = self.get_block_hash(block_number).await;
         CircuitJustification {
-            signed_message,
             authority_set_id,
             current_authority_set_hash: authority_set_hash,
-            pubkeys: authorities.clone(),
-            signatures,
+            valset_pubkeys: authorities.clone(),
             num_authorities,
             block_number,
             block_hash,
+            round: justification.round,
+            precommits,
+            ancestries_encoded,
         }
     }
 
@@ -558,6 +579,8 @@ mod tests {
     use avail_subxt::config::Header;
     use sp1_vector_primitives::decode_and_verify_precommit;
 
+    use crate::types::Precommit;
+
     use super::*;
 
     #[tokio::test]
@@ -671,5 +694,26 @@ mod tests {
         let (_, block_number, _, _) = decode_and_verify_precommit(signed_message.clone());
 
         println!("block number {:?}", block_number);
+    }
+
+    #[test]
+    fn test_signed_message_encoding() {
+        let h1 = H256::random();
+        let h2 = H256::random();
+        let msg1 = Encode::encode(&(
+            &SignerMessage::PrecommitMessage(Precommit {
+                target_hash: h1,
+                target_number: 2,
+            }),
+            3u64,
+            4u64,
+        ));
+        #[derive(Encode)]
+        enum Msg {
+            A,
+            B(([u8; 32], u32, u64, u64)),
+        }
+        let msg2 = Encode::encode(&(1u8, B256::from(h1.0).0, 2u32, 3u64, 4u64));
+        assert_eq!(msg1, msg2, "Messages are not equal")
     }
 }

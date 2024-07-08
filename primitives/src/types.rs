@@ -71,17 +71,20 @@ pub struct HeaderRotateData {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 /// Justification data for an authority set.
 pub struct CircuitJustification {
+    pub round: u64,
     pub authority_set_id: u64,
-    /// Message signed by authority set.
-    pub signed_message: Vec<u8>,
-    pub pubkeys: Vec<B256>,
-    pub signatures: Vec<Option<B512>>,
+    pub valset_pubkeys: Vec<B256>,
+    // pub signatures: Vec<Option<B512>>,
+    // Target block number, target block hash, pubkey, signature
+    pub precommits: Vec<(u32, B256, B256, B512)>,
     pub num_authorities: usize,
     pub current_authority_set_hash: B256,
     /// Block number associated with the justification.
     pub block_number: u32,
     /// Hash of the block associated with the justification.
     pub block_hash: B256,
+    /// Vector of pairs of (parent_hash, encoded_header)
+    pub ancestries_encoded: Vec<(B256, Vec<u8>)>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
