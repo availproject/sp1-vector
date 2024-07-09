@@ -1,5 +1,4 @@
 use std::env;
-use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 
@@ -67,6 +66,8 @@ struct HeaderRangeContractData {
     header_range_commitment_tree_size: u32,
     next_authority_set_hash_exists: bool,
 }
+
+const NUM_RELAY_RETRIES: u32 = 3;
 
 #[derive(Debug)]
 struct RotateContractData {
@@ -394,23 +395,20 @@ impl VectorXOperator {
         };
 
         if self.use_kms_relayer {
-            println!("Relaying header range");
-
             let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
             let proof_bytes = proof_as_bytes.clone().into();
             let public_values = proof.public_values.to_vec().into();
             let commit_header_range = contract.commitHeaderRange(proof_bytes, public_values);
-            let response = relay::send_kms_relay_request(relay::KMSRelayRequest {
-                chain_id: self.chain_id,
-                address: self.contract_address.to_checksum(None),
-                calldata: commit_header_range.calldata().to_string(),
-                platform_request: false,
-            })
-            .await?;
-            if response.status != relay::KMSRelayStatus::Relayed as u32 {
-                return Err(anyhow::anyhow!("Transaction reverted!"));
-            }
-            Ok(B256::from_str(&response.transaction_hash.unwrap()).unwrap())
+            relay::relay_with_kms(
+                &relay::KMSRelayRequest {
+                    chain_id: self.chain_id,
+                    address: self.contract_address.to_checksum(None),
+                    calldata: commit_header_range.calldata().to_string(),
+                    platform_request: false,
+                },
+                NUM_RELAY_RETRIES,
+            )
+            .await
         } else {
             let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
@@ -460,23 +458,20 @@ impl VectorXOperator {
         };
 
         if self.use_kms_relayer {
-            println!("Relaying rotate");
-
             let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
             let proof_bytes = proof_as_bytes.clone().into();
             let public_values = proof.public_values.to_vec().into();
             let rotate = contract.rotate(proof_bytes, public_values);
-            let response = relay::send_kms_relay_request(relay::KMSRelayRequest {
-                chain_id: self.chain_id,
-                address: self.contract_address.to_checksum(None),
-                calldata: rotate.calldata().to_string(),
-                platform_request: false,
-            })
-            .await?;
-            if response.status != relay::KMSRelayStatus::Relayed as u32 {
-                return Err(anyhow::anyhow!("Transaction reverted!"));
-            }
-            Ok(B256::from_str(&response.transaction_hash.unwrap()).unwrap())
+            relay::relay_with_kms(
+                &relay::KMSRelayRequest {
+                    chain_id: self.chain_id,
+                    address: self.contract_address.to_checksum(None),
+                    calldata: rotate.calldata().to_string(),
+                    platform_request: false,
+                },
+                NUM_RELAY_RETRIES,
+            )
+            .await
         } else {
             let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 

@@ -1,5 +1,7 @@
 use std::env;
+use std::str::FromStr;
 
+use alloy::primitives::B256;
 use alloy::providers::{Provider, RootProvider};
 use alloy::transports::http::{Client, Http};
 use anyhow::Result;
@@ -62,7 +64,21 @@ pub struct KMSRelayResponse {
     pub status: u32,
 }
 
-pub async fn send_kms_relay_request(args: KMSRelayRequest) -> Result<KMSRelayResponse> {
+/// Relay a transaction with KMS and return the transaction hash with retries.
+pub async fn relay_with_kms(args: &KMSRelayRequest, num_retries: u32) -> Result<B256> {
+    let mut num_retries = num_retries;
+    while num_retries > 0 {
+        let response = send_kms_relay_request(args).await?;
+        if response.status == KMSRelayStatus::Relayed as u32 {
+            return Ok(B256::from_str(&response.transaction_hash.unwrap())?);
+        }
+        num_retries -= 1;
+    }
+    Err(anyhow::anyhow!("Transaction reverted!"))
+}
+
+/// Send a KMS relay request and get the response.
+async fn send_kms_relay_request(args: &KMSRelayRequest) -> Result<KMSRelayResponse> {
     info!("Sending KMS relay request: {:?}", args);
     // Read relayer endpoint from env
     let relayer_endpoint = env::var("SECURE_RELAYER_ENDPOINT").unwrap();
