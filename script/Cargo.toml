@@ -31,6 +31,8 @@ anyhow = "1.0.68"
 clap = { version = "4.4.9", features = ["derive"] }
 
 alloy = { version = "0.1.1", features = ["full"] }
+serde_json = "1.0.120"
+serde = { version = "1.0.204", features = ["derive"] }
 
 [build-dependencies]
 sp1-helper = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.8-testnet" }

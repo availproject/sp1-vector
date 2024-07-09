@@ -1,4 +1,5 @@
 use std::env;
+use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, sync::Arc};
 
@@ -50,11 +51,13 @@ type EthereumFillProvider = FillProvider<
 
 struct VectorXOperator {
     wallet_filler: Arc<EthereumFillProvider>,
+    provider: Arc<RootProvider<Http<Client>>>,
     client: ProverClient,
     pk: SP1ProvingKey,
     contract_address: Address,
     relayer_address: Address,
     chain_id: u64,
+    use_kms_relayer: bool,
 }
 
 #[derive(Debug)]
@@ -77,6 +80,7 @@ impl VectorXOperator {
 
         let client = ProverClient::new();
         let (pk, _) = client.setup(ELF);
+        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER").unwrap().parse().unwrap();
         let chain_id: u64 = env::var("CHAIN_ID")
             .expect("CHAIN_ID not set")
             .parse()
@@ -94,7 +98,7 @@ impl VectorXOperator {
         let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
         let relayer_address = signer.address();
         let wallet = EthereumWallet::from(signer);
-        let provider = ProviderBuilder::new()
+        let wallet_filler = ProviderBuilder::new()
             .filler(GasFiller)
             .filler(ChainIdFiller::default())
             .wallet(wallet)
@@ -103,10 +107,12 @@ impl VectorXOperator {
         Self {
             client,
             pk,
-            wallet_filler: Arc::new(provider),
+            provider: Arc::new(wallet_filler.root().clone()),
+            wallet_filler: Arc::new(wallet_filler),
             chain_id,
             contract_address,
             relayer_address,
+            use_kms_relayer,
         }
     }
 
@@ -121,7 +127,7 @@ impl VectorXOperator {
 
         let proof_type = ProofType::HeaderRangeProof;
         // Fetch the header range commitment tree size from the contract.
-        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
+        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
         let output = contract
             .headerRangeCommitmentTreeSize()
             .call()
@@ -238,7 +244,7 @@ impl VectorXOperator {
     async fn get_contract_data_for_header_range(&self) -> Result<HeaderRangeContractData> {
         let fetcher = RpcDataFetcher::new().await;
 
-        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
+        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
 
         let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
         let header_range_commitment_tree_size = contract
@@ -269,7 +275,7 @@ impl VectorXOperator {
 
     // Current block and whether next authority set hash exists.
     async fn get_contract_data_for_rotate(&self) -> Result<RotateContractData> {
-        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
+        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
 
         // Fetch the current block from the contract
         let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
@@ -367,8 +373,6 @@ impl VectorXOperator {
 
     /// Relay a header range proof to the SP1 SP1Vector contract.
     async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
-        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
         // TODO: sp1_sdk should return empty bytes in mock mode.
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
             vec![]
@@ -378,42 +382,63 @@ impl VectorXOperator {
             hex::decode(proof_str.replace("0x", "")).unwrap()
         };
 
-        let gas_limit = relay::get_gas_limit(self.chain_id);
-        let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
+        if self.use_kms_relayer {
+            println!("Relaying header range");
 
-        // Wait for 3 required confirmations with a timeout of 60 seconds.
-        const NUM_CONFIRMATIONS: u64 = 3;
-        const TIMEOUT_SECONDS: u64 = 60;
-
-        let current_nonce = self
-            .wallet_filler
-            .get_transaction_count(self.relayer_address)
+            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
+            let proof_bytes = proof_as_bytes.clone().into();
+            let public_values = proof.public_values.to_vec().into();
+            let commit_header_range = contract.commitHeaderRange(proof_bytes, public_values);
+            let response = relay::send_kms_relay_request(relay::KMSRelayRequest {
+                chain_id: self.chain_id,
+                address: self.contract_address.to_checksum(None),
+                calldata: commit_header_range.calldata().to_string(),
+                platform_request: true,
+            })
             .await?;
+            if response.status != relay::KMSRelayStatus::Relayed as u32 {
+                return Err(anyhow::anyhow!("Transaction reverted!"));
+            }
+            Ok(B256::from_str(&response.transaction_hash.unwrap()).unwrap())
+        } else {
+            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let receipt = contract
-            .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
-            .gas_price(max_fee_per_gas)
-            .gas(gas_limit)
-            .nonce(current_nonce)
-            .send()
-            .await?
-            .with_required_confirmations(NUM_CONFIRMATIONS)
-            .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-            .get_receipt()
-            .await?;
+            let gas_limit = relay::get_gas_limit(self.chain_id);
+            let max_fee_per_gas =
+                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
 
-        // If status is false, it reverted.
-        if !receipt.status() {
-            return Err(anyhow::anyhow!("Transaction reverted!"));
+            // Wait for 3 required confirmations with a timeout of 60 seconds.
+            const NUM_CONFIRMATIONS: u64 = 3;
+            const TIMEOUT_SECONDS: u64 = 60;
+
+            let current_nonce = self
+                .wallet_filler
+                .get_transaction_count(self.relayer_address)
+                .await?;
+
+            let receipt = contract
+                .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
+                .gas_price(max_fee_per_gas)
+                .gas(gas_limit)
+                .nonce(current_nonce)
+                .send()
+                .await?
+                .with_required_confirmations(NUM_CONFIRMATIONS)
+                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                .get_receipt()
+                .await?;
+
+            // If status is false, it reverted.
+            if !receipt.status() {
+                return Err(anyhow::anyhow!("Transaction reverted!"));
+            }
+
+            Ok(receipt.transaction_hash)
         }
-
-        Ok(receipt.transaction_hash)
     }
 
     /// Relay a rotate proof to the SP1 SP1Vector contract.
     async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
-        let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
         // TODO: sp1_sdk should return empty bytes in mock mode.
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
             vec![]
@@ -423,36 +448,59 @@ impl VectorXOperator {
             hex::decode(proof_str.replace("0x", "")).unwrap()
         };
 
-        let gas_limit = relay::get_gas_limit(self.chain_id);
-        let max_fee_per_gas = relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
+        if self.use_kms_relayer {
+            println!("Relaying rotate");
 
-        // Wait for 3 required confirmations with a timeout of 60 seconds.
-        const NUM_CONFIRMATIONS: u64 = 3;
-        const TIMEOUT_SECONDS: u64 = 60;
-
-        let current_nonce = self
-            .wallet_filler
-            .get_transaction_count(self.relayer_address)
+            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
+            let proof_bytes = proof_as_bytes.clone().into();
+            let public_values = proof.public_values.to_vec().into();
+            let rotate = contract.rotate(proof_bytes, public_values);
+            let response = relay::send_kms_relay_request(relay::KMSRelayRequest {
+                chain_id: self.chain_id,
+                address: self.contract_address.to_checksum(None),
+                calldata: rotate.calldata().to_string(),
+                platform_request: true,
+            })
             .await?;
+            if response.status != relay::KMSRelayStatus::Relayed as u32 {
+                return Err(anyhow::anyhow!("Transaction reverted!"));
+            }
+            Ok(B256::from_str(&response.transaction_hash.unwrap()).unwrap())
+        } else {
+            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
 
-        let receipt = contract
-            .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
-            .gas_price(max_fee_per_gas)
-            .gas(gas_limit)
-            .nonce(current_nonce)
-            .send()
-            .await?
-            .with_required_confirmations(NUM_CONFIRMATIONS)
-            .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-            .get_receipt()
-            .await?;
+            let gas_limit = relay::get_gas_limit(self.chain_id);
+            let max_fee_per_gas =
+                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
 
-        // If status is false, it reverted.
-        if !receipt.status() {
-            return Err(anyhow::anyhow!("Transaction reverted!"));
+            // Wait for 3 required confirmations with a timeout of 60 seconds.
+            const NUM_CONFIRMATIONS: u64 = 3;
+            const TIMEOUT_SECONDS: u64 = 60;
+
+            let current_nonce = self
+                .wallet_filler
+                .get_transaction_count(self.relayer_address)
+                .await?;
+
+            let receipt = contract
+                .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
+                .gas_price(max_fee_per_gas)
+                .gas(gas_limit)
+                .nonce(current_nonce)
+                .send()
+                .await?
+                .with_required_confirmations(NUM_CONFIRMATIONS)
+                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                .get_receipt()
+                .await?;
+
+            // If status is false, it reverted.
+            if !receipt.status() {
+                return Err(anyhow::anyhow!("Transaction reverted!"));
+            }
+
+            Ok(receipt.transaction_hash)
         }
-
-        Ok(receipt.transaction_hash)
     }
 
     async fn run(&self) -> Result<()> {
