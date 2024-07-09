@@ -209,6 +209,11 @@ impl VectorXOperator {
 
         // If this is the last justified block, check for header range with next authority set.
         let mut request_authority_set_id = current_authority_set_id;
+        println!("last_justified_block: {}", last_justified_block);
+        println!(
+            "vectorx_latest_block: {}",
+            header_range_contract_data.vectorx_latest_block
+        );
         if header_range_contract_data.vectorx_latest_block == last_justified_block {
             let next_authority_set_id = current_authority_set_id + 1;
 
@@ -230,6 +235,8 @@ impl VectorXOperator {
                 request_authority_set_id,
             )
             .await;
+
+        println!("block_to_step_to: {:?}", block_to_step_to);
 
         if let Some(block_to_step_to) = block_to_step_to {
             return Ok(Some((
@@ -335,6 +342,10 @@ impl VectorXOperator {
             avail_current_block,
         );
 
+        println!("max_valid_block_to_step_to: {}", max_valid_block_to_step_to);
+        println!("avail_current_block: {}", avail_current_block);
+        println!("block interval: {}", ideal_block_interval);
+
         // Find the closest block to the maximum valid block to step to that is a multiple of
         // ideal_block_interval.
         let mut block_to_step_to =
@@ -393,7 +404,7 @@ impl VectorXOperator {
                 chain_id: self.chain_id,
                 address: self.contract_address.to_checksum(None),
                 calldata: commit_header_range.calldata().to_string(),
-                platform_request: true,
+                platform_request: false,
             })
             .await?;
             if response.status != relay::KMSRelayStatus::Relayed as u32 {
@@ -459,7 +470,7 @@ impl VectorXOperator {
                 chain_id: self.chain_id,
                 address: self.contract_address.to_checksum(None),
                 calldata: rotate.calldata().to_string(),
-                platform_request: true,
+                platform_request: false,
             })
             .await?;
             if response.status != relay::KMSRelayStatus::Relayed as u32 {
@@ -511,6 +522,11 @@ impl VectorXOperator {
             // Check if there is a rotate available for the next authority set.
             let current_authority_set_id = self.find_rotate().await?;
 
+            println!(
+                "Current authority set id: {}",
+                current_authority_set_id.unwrap_or(0)
+            );
+
             // Request a rotate for the next authority set id.
             if let Some(current_authority_set_id) = current_authority_set_id {
                 let proof = self.request_rotate(current_authority_set_id).await?;
@@ -522,8 +538,12 @@ impl VectorXOperator {
                 );
             }
 
+            println!("On the way for header range!");
+
             // Check if there is a header range request available.
             let header_range_request = self.find_header_range(block_interval).await?;
+
+            println!("header_range_request: {:?}", header_range_request);
 
             if let Some(header_range_request) = header_range_request {
                 // Request the header range proof to block_to_step_to.

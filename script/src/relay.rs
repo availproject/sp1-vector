@@ -3,6 +3,7 @@ use std::env;
 use alloy::providers::{Provider, RootProvider};
 use alloy::transports::http::{Client, Http};
 use anyhow::Result;
+use log::info;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -62,6 +63,7 @@ pub struct KMSRelayResponse {
 }
 
 pub async fn send_kms_relay_request(args: KMSRelayRequest) -> Result<KMSRelayResponse> {
+    info!("Sending KMS relay request: {:?}", args);
     // Read relayer endpoint from env
     let relayer_endpoint = env::var("SECURE_RELAYER_ENDPOINT").unwrap();
     let api_key = env::var("SECURE_RELAYER_API_KEY").unwrap();
