@@ -6,6 +6,11 @@ use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
 use sp1_vector_primitives::types::{ProofOutput, ProofType};
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
+// Requires the following environment variables to be set:
+// - AVAIL_URL: The URL of the Avail RPC endpoint.
+// - AVAIL_CHAIN_ID: The chain id of the Avail network.
+// - VECTORX_QUERY_URL: The URL of the VectorX query service.
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     setup_logger();
