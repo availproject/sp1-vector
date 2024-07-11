@@ -99,8 +99,8 @@ pub struct CircuitJustification {
     pub block_number: u32,
     /// Hash of the block associated with the justification.
     pub block_hash: B256,
-    /// Vector of pairs of (parent_hash, encoded_header) needed to prove precommit target ancestry
-    pub ancestries_encoded: Vec<(B256, Vec<u8>)>,
+    /// Vector of encoded headers needed to prove precommit target ancestry.
+    pub ancestries_encoded: Vec<Vec<u8>>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

@@ -507,7 +507,7 @@ impl RpcDataFetcher {
     }
 }
 
-/// Converts GrandpaJustification and validator set to CircuitJustification
+/// Converts GrandpaJustification and validator set to CircuitJustification.
 pub fn grandpa_and_valset_to_circuit(
     justification: GrandpaJustification,
     validator_set: Vec<B256>,
@@ -528,7 +528,7 @@ pub fn grandpa_and_valset_to_circuit(
     let ancestries_encoded = justification
         .votes_ancestries
         .iter()
-        .map(|e| (B256::from(e.parent_hash.0), e.encode()))
+        .map(Encode::encode)
         .collect::<Vec<_>>();
     let current_authority_set_hash = compute_authority_set_commitment(&validator_set[..]);
 
@@ -546,6 +546,7 @@ pub fn grandpa_and_valset_to_circuit(
 
 #[cfg(test)]
 mod tests {
+    use crate::types::{Commit, Precommit, SignerMessage};
     use avail_subxt::config::Header;
     use avail_subxt::primitives::Header as DaHeader;
     use ed25519::Public;
@@ -553,8 +554,6 @@ mod tests {
     use sp1_vector_primitives::{decode_and_verify_precommit, verify_simple_justification};
     use std::fs::File;
     use test_case::test_case;
-
-    use crate::types::{Commit, Precommit};
 
     use super::*;
 

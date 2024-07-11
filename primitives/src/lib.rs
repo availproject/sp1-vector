@@ -1,9 +1,9 @@
-use std::collections::HashMap;
 use codec::{Compact, Decode, Encode};
 use ed25519_consensus::{Signature, VerificationKey};
 use header_range::hash_encoded_header;
-use types::CircuitJustification;
 use itertools::Itertools;
+use std::collections::HashMap;
+use types::CircuitJustification;
 
 pub mod merkle;
 pub mod types;
@@ -23,11 +23,6 @@ pub fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature
     }
 }
 
-/// Helper function for finding subslice in the slice
-fn is_containing<T: PartialEq>(haystack: &[T], needle: &[T]) -> bool {
-    haystack.windows(needle.len()).any(|c| c == needle)
-}
-
 /// Confirm ancestry of a child block by traversing the ancestry_map until root_hash is reached.
 fn confirm_ancestry(
     child_hash: &B256,
@@ -40,7 +35,7 @@ fn confirm_ancestry(
 
     let mut curr_hash = child_hash;
 
-    // We should be able to test it in at most ancestry_map.len() passes
+    // The path to the root_hash should take at most ancestry_map.len() passes.
     for _ in 0..ancestry_map.len() {
         if let Some(parent_hash) = ancestry_map.get(curr_hash) {
             if parent_hash == root_hash {
@@ -55,7 +50,7 @@ fn confirm_ancestry(
     false
 }
 
-/// Helper function for determining if supermajority is achieved
+/// Determine if a supermajority is achieved.
 fn is_signed_by_supermajority(num_signatures: usize, validator_set_size: usize) -> bool {
     let supermajority = (validator_set_size * 2 / 3) + 1;
     num_signatures >= supermajority
@@ -80,12 +75,9 @@ pub fn verify_simple_justification(
     let ancestry_map: HashMap<B256, B256> = justification
         .ancestries_encoded
         .iter()
-        .map(|(parent_hash, encoded_header)| {
-            // The encoded Header also contains the hash of the parent and isn't altered by the encoding
-            assert!(
-                is_containing(encoded_header, parent_hash.as_slice()),
-                "Parent hash isn't contained in the encoder header"
-            );
+        .map(|encoded_header| {
+            let parent_hash_array: [u8; 32] = encoded_header[0..32].try_into().unwrap();
+            let parent_hash = B256::from(parent_hash_array);
             let header_hash = hash_encoded_header(encoded_header);
 
             (header_hash, parent_hash.to_owned())
@@ -221,9 +213,8 @@ mod tests {
     }
 
     #[test]
-    fn test_header_encoding_preserves_parent() {
+    fn test_header_parent_hash_extracting() {
         let hash = H256::random();
-        let some_other_hash = H256::random();
         let h = DaHeader {
             parent_hash: hash,
             number: 1,
@@ -238,7 +229,9 @@ mod tests {
         };
 
         let encoded = h.encode();
-        assert!(is_containing(&encoded, &hash.0));
-        assert!(!is_containing(&encoded, &some_other_hash.0))
+
+        let n: [u8; 32] = encoded[0..32].try_into().unwrap();
+        let extracted_hash = H256::from(n);
+        assert_eq!(extracted_hash, hash, "Hashes don't match")
     }
 }
