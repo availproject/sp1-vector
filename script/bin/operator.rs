@@ -81,7 +81,10 @@ impl VectorXOperator {
 
         let client = ProverClient::new();
         let (pk, _) = client.setup(ELF);
-        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER").unwrap().parse().unwrap();
+        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER")
+            .unwrap_or_else(|_| "false".to_string())
+            .parse()
+            .unwrap();
         let chain_id: u64 = env::var("CHAIN_ID")
             .expect("CHAIN_ID not set")
             .parse()
@@ -386,7 +389,11 @@ impl VectorXOperator {
     /// Relay a header range proof to the SP1 SP1Vector contract.
     async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
         // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
+        let proof_as_bytes = if env::var("SP1_PROVER")
+            .unwrap_or_else(|_| "network".to_string())
+            .to_lowercase()
+            == "mock"
+        {
             vec![]
         } else {
             let proof_str = proof.bytes();
@@ -449,7 +456,11 @@ impl VectorXOperator {
     /// Relay a rotate proof to the SP1 SP1Vector contract.
     async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
         // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
+        let proof_as_bytes = if env::var("SP1_PROVER")
+            .unwrap_or_else(|_| "network".to_string())
+            .to_lowercase()
+            == "mock"
+        {
             vec![]
         } else {
             let proof_str = proof.bytes();
