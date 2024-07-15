@@ -81,7 +81,10 @@ impl VectorXOperator {
 
         let client = ProverClient::new();
         let (pk, _) = client.setup(ELF);
-        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER").unwrap().parse().unwrap();
+        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER")
+            .unwrap_or("false".to_string())
+            .parse()
+            .unwrap();
         let chain_id: u64 = env::var("CHAIN_ID")
             .expect("CHAIN_ID not set")
             .parse()

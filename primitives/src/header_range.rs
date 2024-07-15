@@ -5,9 +5,10 @@ use blake2::Blake2bVar;
 use crate::consts::HEADER_OUTPUTS_LENGTH;
 use crate::merkle::get_merkle_root_commitments;
 use crate::types::{DecodedHeaderData, HeaderRangeInputs, HeaderRangeOutputs};
-use crate::{decode_scale_compact_int, verify_simple_justification};
+use crate::{decode_scale_compact_int, verify_justification};
 use alloy_sol_types::SolType;
 
+/// Blake2B hash of an encoded header. Note: This is a generic hash fn for any data.
 pub fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
     const DIGEST_SIZE: usize = 32;
     let mut hasher = Blake2bVar::new(DIGEST_SIZE).unwrap();
@@ -35,7 +36,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
         .map(|header_bytes| decode_header(header_bytes.to_vec()))
         .collect();
 
-    // Hash all of the headers.
+    // Get teh hashes of all of the headers.
     let header_hashes = encoded_headers
         .iter()
         .map(|e| hash_encoded_header(e.as_slice()))
@@ -68,7 +69,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     );
 
     // Stage 3: Verify the justification is valid.
-    verify_simple_justification(
+    verify_justification(
         header_range_inputs.target_justification,
         header_range_inputs.authority_set_id,
         header_range_inputs.authority_set_hash,

@@ -1,7 +1,6 @@
 use codec::{Compact, Decode, Encode};
 use ed25519_consensus::{Signature, VerificationKey};
 use header_range::hash_encoded_header;
-use itertools::Itertools;
 use std::collections::HashMap;
 use types::CircuitJustification;
 
@@ -56,8 +55,9 @@ fn is_signed_by_supermajority(num_signatures: usize, validator_set_size: usize) 
     num_signatures >= supermajority
 }
 
-/// Verify a simple justification on a block from the specified authority set.
-pub fn verify_simple_justification(
+/// Verify a justification on a block from the specified authority set. Confirms that a supermajority
+/// of the validator set is achieved on the specific block.
+pub fn verify_justification(
     justification: CircuitJustification,
     authority_set_id: u64,
     current_authority_set_hash: B256,
@@ -70,7 +70,7 @@ pub fn verify_simple_justification(
 
     assert_eq!(justification.authority_set_id, authority_set_id);
 
-    // Form an ancestry map from votes_ancestries in the justification. This maps header hashes to their parents' hashes.
+    // 2. Form an ancestry map from votes_ancestries in the justification. This maps header hashes to their parents' hashes.
     // Since we only get encoded headers, ensure that the parent is contained in the encoded header, no need to decode it.
     let ancestry_map: HashMap<B256, B256> = justification
         .ancestries_encoded
@@ -84,34 +84,43 @@ pub fn verify_simple_justification(
         })
         .collect();
 
-    let (_failed_verifications, signer_addresses): (Vec<_>, Vec<_>) =
-        justification.precommits.iter().partition_map(|p| {
-            // form a message which is signed in the Justification, it's a combination of a Precommit,
-            // round number and set_id (taken from Substrate code)
+    // 3. Get the signer addresses of the accounts with valid precommits for the justification.
+    let signer_addresses: Vec<B256> = justification
+        .precommits
+        .iter()
+        .filter_map(|p| {
+            // Form the message which is signed in the Justification.
+            // Combination of the precommit flag, block data, round number and set_id.
             let signed_message = Encode::encode(&(
                 1u8,
                 p.target_hash.0,
                 p.target_number,
                 &justification.round,
-                &justification.authority_set_id, // Set ID is needed here.
+                &justification.authority_set_id,
             ));
 
+            // Verify the signature is valid on the precommit, and panic if this is not the case.
             verify_signature(p.pubkey.0, &signed_message, p.signature.0);
 
-            let ancestry =
+            // Confirm the ancestry of the child block.
+            let ancestry_confirmed =
                 confirm_ancestry(&p.target_hash, &justification.block_hash, &ancestry_map);
-            ancestry
-                .then_some(p.pubkey)
-                .ok_or((p.pubkey, justification.clone()))
-                .into()
-        });
 
-    // match all the Signer addresses to the Current Validator Set
+            if ancestry_confirmed {
+                Some(p.pubkey)
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    // Count the accounts which are in validator set of the justification.
     let num_matched_addresses = signer_addresses
         .iter()
         .filter(|x| justification.valset_pubkeys.iter().any(|e| e.0.eq(&x[..])))
         .count();
 
+    // 4. Confirm that the supermajority of the validator set is achieved.
     assert!(
         is_signed_by_supermajority(num_matched_addresses, justification.valset_pubkeys.len()),
         "Less than 2/3 of signatures are verified"

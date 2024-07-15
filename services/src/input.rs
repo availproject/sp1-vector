@@ -551,7 +551,7 @@ mod tests {
     use avail_subxt::primitives::Header as DaHeader;
     use ed25519::Public;
     use serde::{Deserialize, Serialize};
-    use sp1_vector_primitives::{decode_and_verify_precommit, verify_simple_justification};
+    use sp1_vector_primitives::{decode_and_verify_precommit, verify_justification};
     use std::fs::File;
     use test_case::test_case;
 
@@ -673,7 +673,6 @@ mod tests {
     #[test]
     fn test_signed_message_encoding() {
         let h1 = H256::random();
-        let h2 = H256::random();
 
         // Cannonical way of forming the signed message (taken from Substrate code)
         let msg1 = Encode::encode(&(
@@ -707,12 +706,12 @@ mod tests {
         }
     }
 
-    impl Into<GrandpaJustification> for JsonGrandpaJustification {
-        fn into(self) -> GrandpaJustification {
+    impl From<JsonGrandpaJustification> for GrandpaJustification {
+        fn from(value: JsonGrandpaJustification) -> Self {
             GrandpaJustification {
-                round: self.round,
-                commit: self.commit,
-                votes_ancestries: self.votes_ancestries,
+                round: value.round,
+                commit: value.commit,
+                votes_ancestries: value.votes_ancestries,
             }
         }
     }
@@ -752,7 +751,7 @@ mod tests {
             validator_set_and_justification.validator_set.set_id,
         );
 
-        verify_simple_justification(
+        verify_justification(
             circuit_justification.clone(),
             validator_set_and_justification.validator_set.set_id,
             circuit_justification.current_authority_set_hash,
