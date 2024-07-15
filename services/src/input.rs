@@ -337,15 +337,13 @@ impl RpcDataFetcher {
         justification: GrandpaJustification,
         block_number: u32,
     ) -> CircuitJustification {
-        // Get the authority set that attested to block_number.
-        let (authority_set_id, _authority_set_hash) = self
-            .get_authority_set_data_for_block(block_number - 1)
-            .await;
+        // Get the authority set id that attested to block_number.
+        let authority_set_id = self.get_authority_set_id(block_number - 1).await;
 
         // Get the authority set for the block number.
         let authorities = self.get_authorities(block_number - 1).await;
 
-        grandpa_and_valset_to_circuit(justification, authorities, authority_set_id)
+        convert_justification_and_valset_to_circuit(justification, authorities, authority_set_id)
     }
 
     /// Get the justification for a block using the DB cache from the justification indexer.
@@ -508,7 +506,7 @@ impl RpcDataFetcher {
 }
 
 /// Converts GrandpaJustification and validator set to CircuitJustification.
-pub fn grandpa_and_valset_to_circuit(
+pub fn convert_justification_and_valset_to_circuit(
     justification: GrandpaJustification,
     validator_set: Vec<B256>,
     set_id: u64,
@@ -745,7 +743,7 @@ mod tests {
             .iter()
             .map(|e| B256::from(e.0))
             .collect::<Vec<_>>();
-        let circuit_justification = grandpa_and_valset_to_circuit(
+        let circuit_justification = convert_justification_and_valset_to_circuit(
             justification,
             validator_set,
             validator_set_and_justification.validator_set.set_id,

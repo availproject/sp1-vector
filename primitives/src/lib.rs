@@ -28,31 +28,21 @@ fn confirm_ancestry(
     root_hash: &B256,
     ancestry_map: &HashMap<B256, B256>,
 ) -> bool {
-    if child_hash == root_hash {
-        return true;
-    }
+    let mut current_hash = child_hash;
 
-    let mut curr_hash = child_hash;
-
-    // The path to the root_hash should take at most ancestry_map.len() passes.
-    for _ in 0..ancestry_map.len() {
-        if let Some(parent_hash) = ancestry_map.get(curr_hash) {
-            if parent_hash == root_hash {
-                return true;
-            }
-            curr_hash = parent_hash;
-        } else {
-            return false;
+    while current_hash != root_hash {
+        match ancestry_map.get(current_hash) {
+            Some(parent_hash) => current_hash = parent_hash,
+            None => return false,
         }
     }
 
-    false
+    true
 }
 
 /// Determine if a supermajority is achieved.
 fn is_signed_by_supermajority(num_signatures: usize, validator_set_size: usize) -> bool {
-    let supermajority = (validator_set_size * 2 / 3) + 1;
-    num_signatures >= supermajority
+    num_signatures * 3 > validator_set_size * 2
 }
 
 /// Verify a justification on a block from the specified authority set. Confirms that a supermajority

@@ -36,7 +36,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
         .map(|header_bytes| decode_header(header_bytes.to_vec()))
         .collect();
 
-    // Get teh hashes of all of the headers.
+    // Get the hashes of all of the headers.
     let header_hashes = encoded_headers
         .iter()
         .map(|e| hash_encoded_header(e.as_slice()))
