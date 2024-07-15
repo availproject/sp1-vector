@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let trusted_block = 305130;
     let target_block = 305160;
 
-    let proof_type = ProofType::HeaderRangeProof;
+    let proof_type = ProofType::RotateProof;
 
     let fetcher = RpcDataFetcher::new().await;
     let mut stdin: SP1Stdin = SP1Stdin::new();
