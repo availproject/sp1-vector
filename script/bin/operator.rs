@@ -3,31 +3,19 @@ use std::env;
 
 use alloy::sol_types::SolValue;
 use alloy::{primitives::B256, sol};
-
 use anyhow::Result;
 use log::{error, info};
 use nodekit_seq_sdk::client::jsonrpc_client;
+use serde::{Deserialize, Serialize};
 use services::input::RpcDataFetcher;
-use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin};
+use sp1_recursion_gnark_ffi::PlonkBn254Proof;
+use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin, SP1VerifyingKey};
 use sp1_vector_primitives::types::ProofType;
+use std::{fs::File, io::Write};
 
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
 sol! {
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    contract SP1Vector {
-        bool public frozen;
-        uint32 public latestBlock;
-        uint64 public latestAuthoritySetId;
-        mapping(uint64 => bytes32) public authoritySetIdToHash;
-        uint32 public headerRangeCommitmentTreeSize;
-        bytes32 public vectorXProgramVkey;
-        address public verifier;
-
-        function rotate(bytes calldata proof, bytes calldata publicValues) external;
-        function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external;
-    }
 
     struct CommitHeaderRangeAndRotateInput{
         bytes proof;
@@ -55,6 +43,14 @@ struct HeaderRangeContractData {
 struct RotateContractData {
     current_block: u32,
     next_authority_set_hash_exists: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HelperForJsonFileOutput {
+    #[serde(rename = "proof")]
+    proof: PlonkBn254Proof,
+    #[serde(rename = "verifyingKey")]
+    verification_key: SP1VerifyingKey,
 }
 
 impl VectorXOperator {
@@ -119,7 +115,18 @@ impl VectorXOperator {
             trusted_block, target_block
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        let proof = self.client.prove_plonk(&self.pk, stdin).unwrap();
+        let helper_output = HelperForJsonFileOutput {
+            proof: proof.proof.clone(),
+            verification_key: self.pk.vk.clone(),
+        };
+        let json_output = serde_json::to_string(&helper_output).unwrap();
+        let file_name = format!("proof_{}_{}.json", trusted_block, target_block);
+        // Create a file and write the data
+        let mut file = File::create(file_name).expect("Unable to create file");
+        file.write_all(json_output.as_bytes())
+            .expect("Unable to write data");
+        Ok(proof)
     }
 
     async fn request_rotate(&self, current_authority_set_id: u64) -> Result<SP1PlonkBn254Proof> {
@@ -139,7 +146,18 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        let proof = self.client.prove_plonk(&self.pk, stdin).unwrap();
+        let helper_output = HelperForJsonFileOutput {
+            proof: proof.proof.clone(),
+            verification_key: self.pk.vk.clone(),
+        };
+        let json_output = serde_json::to_string(&helper_output).unwrap();
+        let file_name = format!("proof_{}.json", current_authority_set_id);
+        // Create a file and write the data
+        let mut file = File::create(file_name).expect("Unable to create file");
+        file.write_all(json_output.as_bytes())
+            .expect("Unable to write data");
+        Ok(proof)
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
