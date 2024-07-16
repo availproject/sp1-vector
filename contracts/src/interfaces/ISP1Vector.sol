@@ -65,4 +65,7 @@ interface ISP1Vector {
 
     /// @notice Target block is not greater than the latest block.
     error InvalidTargetBlock();
+
+    /// @notice Relayer not approved.
+    error RelayerNotApproved();
 }
