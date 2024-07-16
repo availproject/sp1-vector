@@ -1,9 +1,13 @@
+use blake2::{
+    digest::{Update, VariableOutput},
+    Blake2bVar,
+};
+
 use codec::{Compact, Decode, Encode};
 use ed25519_consensus::{Signature, VerificationKey};
-use header_range::hash_encoded_header;
-use std::collections::HashMap;
-use types::CircuitJustification;
 
+mod justification;
+pub use justification::verify_justification;
 pub mod merkle;
 pub mod types;
 use sha2::{Digest as Sha256Digest, Sha256};
@@ -22,99 +26,15 @@ pub fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature
     }
 }
 
-/// Confirm ancestry of a child block by traversing the ancestry_map until root_hash is reached.
-fn confirm_ancestry(
-    child_hash: &B256,
-    root_hash: &B256,
-    ancestry_map: &HashMap<B256, B256>,
-) -> bool {
-    let mut current_hash = child_hash;
+/// Blake2B hash of an encoded header. Note: This is a generic hash fn for any data.
+pub fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
+    const DIGEST_SIZE: usize = 32;
+    let mut hasher = Blake2bVar::new(DIGEST_SIZE).unwrap();
+    hasher.update(encoded_header);
 
-    while current_hash != root_hash {
-        match ancestry_map.get(current_hash) {
-            Some(parent_hash) => current_hash = parent_hash,
-            None => return false,
-        }
-    }
-
-    true
-}
-
-/// Determine if a supermajority is achieved.
-fn is_signed_by_supermajority(num_signatures: usize, validator_set_size: usize) -> bool {
-    num_signatures * 3 > validator_set_size * 2
-}
-
-/// Verify a justification on a block from the specified authority set. Confirms that a supermajority
-/// of the validator set is achieved on the specific block.
-pub fn verify_justification(
-    justification: CircuitJustification,
-    authority_set_id: u64,
-    current_authority_set_hash: B256,
-) {
-    // 1. Verify the authority set commitment is valid.
-    assert_eq!(
-        justification.current_authority_set_hash,
-        current_authority_set_hash
-    );
-
-    assert_eq!(justification.authority_set_id, authority_set_id);
-
-    // 2. Form an ancestry map from votes_ancestries in the justification. This maps header hashes to their parents' hashes.
-    // Since we only get encoded headers, ensure that the parent is contained in the encoded header, no need to decode it.
-    let ancestry_map: HashMap<B256, B256> = justification
-        .ancestries_encoded
-        .iter()
-        .map(|encoded_header| {
-            let parent_hash_array: [u8; 32] = encoded_header[0..32].try_into().unwrap();
-            let parent_hash = B256::from(parent_hash_array);
-            let header_hash = hash_encoded_header(encoded_header);
-
-            (header_hash, parent_hash.to_owned())
-        })
-        .collect();
-
-    // 3. Get the signer addresses of the accounts with valid precommits for the justification.
-    let signer_addresses: Vec<B256> = justification
-        .precommits
-        .iter()
-        .filter_map(|p| {
-            // Form the message which is signed in the Justification.
-            // Combination of the precommit flag, block data, round number and set_id.
-            let signed_message = Encode::encode(&(
-                1u8,
-                p.target_hash.0,
-                p.target_number,
-                &justification.round,
-                &justification.authority_set_id,
-            ));
-
-            // Verify the signature is valid on the precommit, and panic if this is not the case.
-            verify_signature(p.pubkey.0, &signed_message, p.signature.0);
-
-            // Confirm the ancestry of the child block.
-            let ancestry_confirmed =
-                confirm_ancestry(&p.target_hash, &justification.block_hash, &ancestry_map);
-
-            if ancestry_confirmed {
-                Some(p.pubkey)
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Count the accounts which are in validator set of the justification.
-    let num_matched_addresses = signer_addresses
-        .iter()
-        .filter(|x| justification.valset_pubkeys.iter().any(|e| e.0.eq(&x[..])))
-        .count();
-
-    // 4. Confirm that the supermajority of the validator set is achieved.
-    assert!(
-        is_signed_by_supermajority(num_matched_addresses, justification.valset_pubkeys.len()),
-        "Less than 2/3 of signatures are verified"
-    );
+    let mut digest_bytes = [0u8; DIGEST_SIZE];
+    let _ = hasher.finalize_variable(&mut digest_bytes);
+    B256::from(digest_bytes)
 }
 
 /// Compute the new authority set hash from the encoded pubkeys.
