@@ -1,62 +1,34 @@
+use std::cmp::min;
 use std::env;
-use std::time::Duration;
-use std::{cmp::min, sync::Arc};
 
-use alloy::{
-    network::{Ethereum, EthereumWallet},
-    primitives::{Address, B256},
-    providers::{
-        fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, WalletFiller},
-        Identity, Provider, ProviderBuilder, RootProvider,
-    },
-    signers::local::PrivateKeySigner,
-    sol,
-    transports::http::{Client, Http},
-};
-
+use alloy::sol_types::SolValue;
+use alloy::{primitives::B256, sol};
 use anyhow::Result;
 use log::{error, info};
+use nodekit_seq_sdk::client::jsonrpc_client;
+use serde::{Deserialize, Serialize};
 use services::input::RpcDataFetcher;
-use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin};
+use sp1_recursion_gnark_ffi::PlonkBn254Proof;
+use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin, SP1VerifyingKey};
 use sp1_vector_primitives::types::ProofType;
-use sp1_vectorx_script::relay::{self};
+use std::{fs::File, io::Write};
+
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
 sol! {
-    #[allow(missing_docs)]
-    #[sol(rpc)]
-    contract SP1Vector {
-        bool public frozen;
-        uint32 public latestBlock;
-        uint64 public latestAuthoritySetId;
-        mapping(uint64 => bytes32) public authoritySetIdToHash;
-        uint32 public headerRangeCommitmentTreeSize;
-        bytes32 public vectorXProgramVkey;
-        address public verifier;
 
-        function rotate(bytes calldata proof, bytes calldata publicValues) external;
-        function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external;
+    struct CommitHeaderRangeAndRotateInput{
+        bytes proof;
+        bytes publicValues;
     }
 }
 
-/// Alias the fill provider for the Ethereum network. Retrieved from the instantiation
-/// of the ProviderBuilder. Recommended method for passing around a ProviderBuilder.
-type EthereumFillProvider = FillProvider<
-    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, ChainIdFiller>, WalletFiller<EthereumWallet>>,
-    RootProvider<Http<Client>>,
-    Http<Client>,
-    Ethereum,
->;
-
 struct VectorXOperator {
-    wallet_filler: Arc<EthereumFillProvider>,
-    provider: Arc<RootProvider<Http<Client>>>,
     client: ProverClient,
     pk: SP1ProvingKey,
-    contract_address: Address,
-    relayer_address: Address,
-    chain_id: u64,
-    use_kms_relayer: bool,
+    rpc_client: jsonrpc_client::JSONRPCClient,
+    // contract address
+    address: String,
 }
 
 #[derive(Debug)]
@@ -67,12 +39,18 @@ struct HeaderRangeContractData {
     next_authority_set_hash_exists: bool,
 }
 
-const NUM_RELAY_RETRIES: u32 = 3;
-
 #[derive(Debug)]
 struct RotateContractData {
     current_block: u32,
     next_authority_set_hash_exists: bool,
+}
+
+#[derive(Serialize, Deserialize)]
+struct HelperForJsonFileOutput {
+    #[serde(rename = "proof")]
+    proof: PlonkBn254Proof,
+    #[serde(rename = "verifyingKey")]
+    verification_key: SP1VerifyingKey,
 }
 
 impl VectorXOperator {
@@ -81,42 +59,20 @@ impl VectorXOperator {
 
         let client = ProverClient::new();
         let (pk, _) = client.setup(ELF);
-        let use_kms_relayer: bool = env::var("USE_KMS_RELAYER")
-            .unwrap_or("false".to_string())
-            .parse()
-            .unwrap();
-        let chain_id: u64 = env::var("CHAIN_ID")
-            .expect("CHAIN_ID not set")
-            .parse()
-            .unwrap();
-        let rpc_url = env::var("RPC_URL")
-            .expect("RPC_URL not set")
-            .parse()
-            .unwrap();
 
-        let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY not set");
-        let contract_address = env::var("CONTRACT_ADDRESS")
-            .expect("CONTRACT_ADDRESS not set")
-            .parse()
-            .unwrap();
-        let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
-        let relayer_address = signer.address();
-        let wallet = EthereumWallet::from(signer);
-        let wallet_filler = ProviderBuilder::new()
-            .filler(GasFiller)
-            .filler(ChainIdFiller::default())
-            .wallet(wallet)
-            .on_http(rpc_url);
+        let rpc_client = jsonrpc_client::JSONRPCClient::new(
+            env::var("RPC_URL").unwrap().as_str(),
+            env::var("NETWORK_ID").unwrap().parse::<u32>().unwrap(),
+            env::var("CHAIN_ID").unwrap(),
+        )
+        .unwrap();
 
+        let address = env::var("ADDRESS").expect("ADDRESS not set");
         Self {
             client,
             pk,
-            provider: Arc::new(wallet_filler.root().clone()),
-            wallet_filler: Arc::new(wallet_filler),
-            chain_id,
-            contract_address,
-            relayer_address,
-            use_kms_relayer,
+            rpc_client,
+            address,
         }
     }
 
@@ -131,17 +87,23 @@ impl VectorXOperator {
 
         let proof_type = ProofType::HeaderRangeProof;
         // Fetch the header range commitment tree size from the contract.
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
-        let output = contract
-            .headerRangeCommitmentTreeSize()
-            .call()
-            .await
+
+        let storage_slot = env::var("STORAGE_SLOT_HEADER_RANGE_COMMITMENT_TREE_SIZE")
+            .unwrap()
+            .parse::<u32>()
+            .expect("STORAGE_SLOT_HEADER_RANGE_COMMITMENT_TREE_SIZE not set");
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot.to_be_bytes().into())
             .unwrap();
+
+        let header_range_commitment_tree_size =
+            u32::from_be_bytes(resp.data[0..4].try_into().unwrap());
         let header_range_inputs = fetcher
             .get_header_range_inputs(
                 trusted_block,
                 target_block,
-                Some(output.headerRangeCommitmentTreeSize),
+                Some(header_range_commitment_tree_size),
             )
             .await;
 
@@ -153,7 +115,18 @@ impl VectorXOperator {
             trusted_block, target_block
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        let proof = self.client.prove_plonk(&self.pk, stdin).unwrap();
+        let helper_output = HelperForJsonFileOutput {
+            proof: proof.proof.clone(),
+            verification_key: self.pk.vk.clone(),
+        };
+        let json_output = serde_json::to_string(&helper_output).unwrap();
+        let file_name = format!("proof_{}_{}.json", trusted_block, target_block);
+        // Create a file and write the data
+        let mut file = File::create(file_name).expect("Unable to create file");
+        file.write_all(json_output.as_bytes())
+            .expect("Unable to write data");
+        Ok(proof)
     }
 
     async fn request_rotate(&self, current_authority_set_id: u64) -> Result<SP1PlonkBn254Proof> {
@@ -162,6 +135,7 @@ impl VectorXOperator {
         let mut stdin: SP1Stdin = SP1Stdin::new();
 
         let proof_type = ProofType::RotateProof;
+        // fetcher inputs are indepedent of destination chain. dependent only on avail chain.
         let rotate_input = fetcher.get_rotate_inputs(current_authority_set_id).await;
 
         stdin.write(&proof_type);
@@ -172,7 +146,18 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        let proof = self.client.prove_plonk(&self.pk, stdin).unwrap();
+        let helper_output = HelperForJsonFileOutput {
+            proof: proof.proof.clone(),
+            verification_key: self.pk.vk.clone(),
+        };
+        let json_output = serde_json::to_string(&helper_output).unwrap();
+        let file_name = format!("proof_{}.json", current_authority_set_id);
+        // Create a file and write the data
+        let mut file = File::create(file_name).expect("Unable to create file");
+        file.write_all(json_output.as_bytes())
+            .expect("Unable to write data");
+        Ok(proof)
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
@@ -255,14 +240,29 @@ impl VectorXOperator {
     async fn get_contract_data_for_header_range(&self) -> Result<HeaderRangeContractData> {
         let fetcher = RpcDataFetcher::new().await;
 
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
+        let storage_slot = env::var("STORAGE_SLOT_LATEST_BLOCK")
+            .unwrap()
+            .parse::<u32>()
+            .expect("STORAGE_SLOT_LATEST_BLOCK not set");
 
-        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
-        let header_range_commitment_tree_size = contract
-            .headerRangeCommitmentTreeSize()
-            .call()
-            .await?
-            .headerRangeCommitmentTreeSize;
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot.to_be_bytes().into())
+            .unwrap();
+
+        let vectorx_latest_block = u32::from_be_bytes(resp.data[0..4].try_into().unwrap());
+
+        let storage_slot = env::var("STORAGE_SLOT_HEADER_RANGE_COMMITMENT_TREE_SIZE")
+            .unwrap()
+            .parse::<u32>()
+            .expect("STORAGE_SLOT_HEADER_RANGE_COMMITMENT_TREE_SIZE not set");
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot.to_be_bytes().into())
+            .unwrap();
+
+        let header_range_commitment_tree_size =
+            u32::from_be_bytes(resp.data[0..4].try_into().unwrap());
 
         let avail_current_block = fetcher.get_head().await.number;
 
@@ -270,12 +270,20 @@ impl VectorXOperator {
             fetcher.get_authority_set_id(vectorx_latest_block - 1).await;
         let next_authority_set_id = vectorx_current_authority_set_id + 1;
 
-        let next_authority_set_hash = contract
-            .authoritySetIdToHash(next_authority_set_id)
-            .call()
-            .await?
-            ._0;
+        let storage_slot_map_identifier =
+            env::var("STORAGE_SLOT_MAPPING_AUTHORITY_SET_ID_TO_HASH_ID")
+                .unwrap()
+                .parse::<u32>()
+                .expect("STORAGE_SLOT_MAPPING_AUTHORITY_SET_ID_TO_HASH_ID not set");
 
+        let mut storage_slot = storage_slot_map_identifier.to_be_bytes().to_vec();
+        storage_slot.append(&mut next_authority_set_id.to_be_bytes().to_vec());
+
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot)
+            .unwrap();
+        let next_authority_set_hash = B256::from_slice(&resp.data[0..32]);
         Ok(HeaderRangeContractData {
             vectorx_latest_block,
             avail_current_block,
@@ -286,25 +294,50 @@ impl VectorXOperator {
 
     // Current block and whether next authority set hash exists.
     async fn get_contract_data_for_rotate(&self) -> Result<RotateContractData> {
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
-
         // Fetch the current block from the contract
-        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
+        let storage_slot = env::var("STORAGE_SLOT_LATEST_BLOCK")
+            .unwrap()
+            .parse::<u32>()
+            .expect("STORAGE_SLOT_LATEST_BLOCK not set");
+
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot.to_be_bytes().into())
+            .unwrap();
+
+        let vectorx_latest_block = u32::from_be_bytes(resp.data[0..4].try_into().unwrap());
 
         // Fetch the current authority set id from the contract
-        let vectorx_latest_authority_set_id = contract
-            .latestAuthoritySetId()
-            .call()
-            .await?
-            .latestAuthoritySetId;
+        let storage_slot = env::var("STORAGE_SLOT_LATEST_AUTHORITY_SET_ID")
+            .unwrap()
+            .parse::<u32>()
+            .expect("STORAGE_SLOT_LATEST_AUTHORITY_SET_ID not set");
+
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot.to_be_bytes().into())
+            .unwrap();
+
+        let vectorx_latest_authority_set_id =
+            u64::from_be_bytes(resp.data[0..8].try_into().unwrap());
 
         // Check if the next authority set id exists in the contract
         let next_authority_set_id = vectorx_latest_authority_set_id + 1;
-        let next_authority_set_hash = contract
-            .authoritySetIdToHash(next_authority_set_id)
-            .call()
-            .await?
-            ._0;
+        let storage_slot_map_identifier =
+            env::var("STORAGE_SLOT_MAPPING_AUTHORITY_SET_ID_TO_HASH_ID")
+                .unwrap()
+                .parse::<u32>()
+                .expect("STORAGE_SLOT_MAPPING_AUTHORITY_SET_ID_TO_HASH_ID not set");
+
+        let mut storage_slot = storage_slot_map_identifier.to_be_bytes().to_vec();
+        storage_slot.append(&mut next_authority_set_id.to_be_bytes().to_vec());
+
+        let resp = self
+            .rpc_client
+            .get_storage_slot_data(self.address.clone(), storage_slot)
+            .unwrap();
+        let next_authority_set_hash = B256::from_slice(&resp.data[0..32]);
+
         let next_authority_set_hash_exists = next_authority_set_hash != B256::ZERO;
 
         // Return the fetched data
@@ -387,129 +420,51 @@ impl VectorXOperator {
     }
 
     /// Relay a header range proof to the SP1 SP1Vector contract.
-    async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
-        // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            vec![]
-        } else {
-            let proof_str = proof.bytes();
-            // Strip the 0x prefix from proof_str, if it exists.
-            hex::decode(proof_str.replace("0x", "")).unwrap()
+    async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<String> {
+        let public_value_bytes = proof.public_values.to_vec();
+
+        let input = CommitHeaderRangeAndRotateInput {
+            // raw proof is used to verify the plonk proof in gnark.
+            // solidity verifier uses encoded proof, packed by first 4 bytes with sp1 version identefier.
+            proof: proof.proof.raw_proof.into(),
+            // public value bytes are same as the public inputs accepted/used during proof generation.
+            // public value bytes contain the proof type of header range or request.
+            publicValues: public_value_bytes.into(),
         };
 
-        if self.use_kms_relayer {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
-            let proof_bytes = proof_as_bytes.clone().into();
-            let public_values = proof.public_values.to_vec().into();
-            let commit_header_range = contract.commitHeaderRange(proof_bytes, public_values);
-            relay::relay_with_kms(
-                &relay::KMSRelayRequest {
-                    chain_id: self.chain_id,
-                    address: self.contract_address.to_checksum(None),
-                    calldata: commit_header_range.calldata().to_string(),
-                    platform_request: false,
-                },
-                NUM_RELAY_RETRIES,
+        let tx_reply = self
+            .rpc_client
+            .submit_transact_tx(
+                String::from("commit_header_range"),
+                self.address.clone(),
+                input.abi_encode(),
             )
-            .await
-        } else {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
-            let gas_limit = relay::get_gas_limit(self.chain_id);
-            let max_fee_per_gas =
-                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
-
-            // Wait for 3 required confirmations with a timeout of 60 seconds.
-            const NUM_CONFIRMATIONS: u64 = 3;
-            const TIMEOUT_SECONDS: u64 = 60;
-
-            let current_nonce = self
-                .wallet_filler
-                .get_transaction_count(self.relayer_address)
-                .await?;
-
-            let receipt = contract
-                .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
-                .gas_price(max_fee_per_gas)
-                .gas(gas_limit)
-                .nonce(current_nonce)
-                .send()
-                .await?
-                .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-                .get_receipt()
-                .await?;
-
-            // If status is false, it reverted.
-            if !receipt.status() {
-                return Err(anyhow::anyhow!("Transaction reverted!"));
-            }
-
-            Ok(receipt.transaction_hash)
-        }
+            .unwrap();
+        Ok(tx_reply.tx_id)
     }
 
     /// Relay a rotate proof to the SP1 SP1Vector contract.
-    async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
-        // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            vec![]
-        } else {
-            let proof_str = proof.bytes();
-            // Strip the 0x prefix from proof_str, if it exists.
-            hex::decode(proof_str.replace("0x", "")).unwrap()
+    async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<String> {
+        let public_value_bytes = proof.public_values.to_vec();
+
+        let input = CommitHeaderRangeAndRotateInput {
+            // raw proof is used to verify the plonk proof in gnark.
+            // solidity verifier uses encoded proof, packed by first 4 bytes with sp1 version identefier.
+            proof: proof.proof.raw_proof.into(),
+            // public value bytes are same as the public inputs accepted/used during proof generation.
+            // public value bytes contain the proof type of header range or request.
+            publicValues: public_value_bytes.into(),
         };
 
-        if self.use_kms_relayer {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
-            let proof_bytes = proof_as_bytes.clone().into();
-            let public_values = proof.public_values.to_vec().into();
-            let rotate = contract.rotate(proof_bytes, public_values);
-            relay::relay_with_kms(
-                &relay::KMSRelayRequest {
-                    chain_id: self.chain_id,
-                    address: self.contract_address.to_checksum(None),
-                    calldata: rotate.calldata().to_string(),
-                    platform_request: false,
-                },
-                NUM_RELAY_RETRIES,
+        let tx_reply = self
+            .rpc_client
+            .submit_transact_tx(
+                String::from("rotate"),
+                self.address.clone(),
+                input.abi_encode(),
             )
-            .await
-        } else {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
-            let gas_limit = relay::get_gas_limit(self.chain_id);
-            let max_fee_per_gas =
-                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
-
-            // Wait for 3 required confirmations with a timeout of 60 seconds.
-            const NUM_CONFIRMATIONS: u64 = 3;
-            const TIMEOUT_SECONDS: u64 = 60;
-
-            let current_nonce = self
-                .wallet_filler
-                .get_transaction_count(self.relayer_address)
-                .await?;
-
-            let receipt = contract
-                .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
-                .gas_price(max_fee_per_gas)
-                .gas(gas_limit)
-                .nonce(current_nonce)
-                .send()
-                .await?
-                .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
-                .get_receipt()
-                .await?;
-
-            // If status is false, it reverted.
-            if !receipt.status() {
-                return Err(anyhow::anyhow!("Transaction reverted!"));
-            }
-
-            Ok(receipt.transaction_hash)
-        }
+            .unwrap();
+        Ok(tx_reply.tx_id)
     }
 
     async fn run(&self) -> Result<()> {
@@ -530,7 +485,7 @@ impl VectorXOperator {
                 let proof = self.request_rotate(current_authority_set_id).await?;
                 let tx_hash = self.relay_rotate(proof).await?;
                 info!(
-                    "Added authority set {}\nTransaction hash: {}",
+                    "Added authority set {}\nTransaction ID: {}",
                     current_authority_set_id + 1,
                     tx_hash
                 );
@@ -552,7 +507,7 @@ impl VectorXOperator {
                     Ok(proof) => {
                         let tx_hash = self.relay_header_range(proof).await?;
                         info!(
-                            "Posted data commitment from block {} to block {}\nTransaction hash: {}",
+                            "Posted data commitment from block {} to block {}\nTransaction ID: {}",
                             header_range_request.0, header_range_request.1, tx_hash
                         );
                     }

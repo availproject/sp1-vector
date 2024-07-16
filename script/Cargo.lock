@@ -2513,6 +2513,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cd7e35aee659887cbfb97aaf227ac12cad1a9d7c71e55ff3376839ed4e282d08"
 
 [[package]]
+name = "context"
+version = "3.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0adf149597f6e75ab7c41ec360dd1a74c86667cf0ef09bd3c207d508665f60e8"
+dependencies = [
+ "cc",
+ "libc",
+ "winapi",
+]
+
+[[package]]
 name = "convert_case"
 version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5476,6 +5487,23 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43794a0ace135be66a25d3ae77d41b91615fb68ae937f904090203e81f755b65"
 
 [[package]]
+name = "nodekit_seq_sdk"
+version = "0.2.0"
+source = "git+https://github.com/AnomalyFi/rust-seq-sdk?tag=v0.0.3#af9fd894df308da0a3fe5516d43eb9cdbf7a12e1"
+dependencies = [
+ "async-trait",
+ "base64 0.13.1",
+ "bytes",
+ "context",
+ "http 0.2.12",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_bytes_ng",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "nodrop"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7589,6 +7617,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_bytes_ng"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bdb0ebce8684e2253f964e8b6ce51f0ccc6666bbb448fb4a6788088bda6544b6"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde_derive"
 version = "1.0.204"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8952,10 +8989,12 @@ dependencies = [
  "env_logger",
  "hex",
  "log",
+ "nodekit_seq_sdk",
  "serde",
  "serde_json",
  "services",
  "sp1-helper",
+ "sp1-recursion-gnark-ffi",
  "sp1-sdk",
  "sp1-vector-primitives",
  "tokio",
