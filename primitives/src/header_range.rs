@@ -56,13 +56,10 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     );
 
     // Stage 3: Verify the justification is valid.
-    verify_justification(
-        header_range_inputs.target_justification,
-        header_range_inputs.authority_set_id,
-        header_range_inputs.authority_set_hash,
-    );
+    verify_justification(&header_range_inputs.target_justification);
 
-    // Stage 4: Compute the simple Merkle tree commitment for the headers.
+    // Stage 4: Compute the simple Merkle tree commitment for the headers. Note: Does not include
+    // the trusted header in the commitment.
     let (state_root_commitment, data_root_commitment) = get_merkle_root_commitments(
         &decoded_headers_data[1..],
         header_range_inputs.merkle_tree_size,
@@ -71,8 +68,10 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     HeaderRangeOutputs::abi_encode(&(
         header_range_inputs.trusted_block,
         header_range_inputs.trusted_header_hash,
-        header_range_inputs.authority_set_id,
-        header_range_inputs.authority_set_hash,
+        header_range_inputs.target_justification.authority_set_id,
+        header_range_inputs
+            .target_justification
+            .current_authority_set_hash,
         header_range_inputs.target_block,
         header_hashes[header_hashes.len() - 1],
         state_root_commitment,

@@ -111,8 +111,6 @@ impl RpcDataFetcher {
         let trusted_header = self.get_header(trusted_block).await;
         let trusted_header_hash: alloy_primitives::FixedBytes<32> =
             B256::from_slice(&trusted_header.hash().0);
-        let (authority_set_id, authority_set_hash) =
-            self.get_authority_set_data_for_block(trusted_block).await;
 
         let num_headers = target_block - trusted_block + 1;
         let merkle_tree_size: usize;
@@ -142,8 +140,6 @@ impl RpcDataFetcher {
             trusted_block,
             target_block,
             trusted_header_hash,
-            authority_set_hash,
-            authority_set_id,
             merkle_tree_size,
             encoded_headers,
             target_justification,
@@ -151,12 +147,6 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> RotateInputs {
-        let epoch_end_block = self.last_justified_block(authority_set_id).await;
-
-        let authority_set_hash = self
-            .compute_authority_set_hash_for_block(epoch_end_block - 1)
-            .await;
-
         let justification = self
             .get_justification_data_epoch_end_block(authority_set_id)
             .await;
@@ -164,8 +154,6 @@ impl RpcDataFetcher {
         let header_rotate_data = self.get_header_rotate(authority_set_id).await;
 
         RotateInputs {
-            current_authority_set_id: authority_set_id,
-            current_authority_set_hash: authority_set_hash,
             justification,
             header_rotate_data,
         }
@@ -493,12 +481,9 @@ impl RpcDataFetcher {
             );
         }
 
-        let new_authority_set_hash = compute_authority_set_commitment(&new_authorities);
-
         HeaderRotateData {
             header_bytes,
             num_authorities: new_authorities.len(),
-            new_authority_set_hash,
             pubkeys: new_authorities,
             consensus_log_position: position,
         }
@@ -607,10 +592,8 @@ mod tests {
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
         let rotate_data = fetcher.get_header_rotate(new_authority_set_id).await;
-        println!(
-            "new authority set hash {:?}",
-            rotate_data.new_authority_set_hash
-        );
+        let new_authority_set_hash = compute_authority_set_commitment(&rotate_data.pubkeys);
+        println!("new authority set hash {:?}", new_authority_set_hash);
     }
 
     #[tokio::test]
@@ -749,10 +732,6 @@ mod tests {
             validator_set_and_justification.validator_set.set_id,
         );
 
-        verify_justification(
-            circuit_justification.clone(),
-            validator_set_and_justification.validator_set.set_id,
-            circuit_justification.current_authority_set_hash,
-        )
+        verify_justification(&circuit_justification)
     }
 }

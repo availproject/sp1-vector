@@ -82,7 +82,8 @@ pub fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
     (value.into(), value.encoded_size())
 }
 
-/// Verify that the encoded validators match the provided pubkeys, have the correct weight, and the delay is zero.
+/// Verify that the encoded validators match the provided pubkeys, have the correct weight, and the
+/// delay is set to zero.
 pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubkeys: &Vec<B256>) {
     let mut cursor = start_cursor;
     for pubkey in pubkeys {
@@ -91,7 +92,7 @@ pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubke
         assert_eq!(extracted_pubkey, *pubkey);
         let extracted_weight = &header_bytes[cursor + PUBKEY_LENGTH..cursor + VALIDATOR_LENGTH];
 
-        // All validating voting weights in Avail are 1.
+        // All validator voting weights in Avail are 1.
         assert_eq!(extracted_weight, &[1u8, 0, 0, 0, 0, 0, 0, 0]);
         cursor += VALIDATOR_LENGTH;
     }

@@ -8,18 +8,11 @@ use alloy_sol_types::SolType;
 /// Verify the justification from the current authority set on the epoch end header and return the new
 /// authority set commitment.
 pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH] {
-    // Compute new authority set hash & convert it from binary to bytes32 for the blockchain
-    let new_authority_set_hash =
-        compute_authority_set_commitment(&rotate_inputs.header_rotate_data.pubkeys);
-
     // Verify the provided justification is valid.
-    verify_justification(
-        rotate_inputs.justification,
-        rotate_inputs.current_authority_set_id,
-        rotate_inputs.current_authority_set_hash,
-    );
+    verify_justification(&rotate_inputs.justification);
 
-    // Verify the encoded epoch end header is formatted correctly, and that the provided new pubkeys match the encoded ones.
+    // Verify the encoded epoch end header is formatted correctly, and that the provided new pubkeys
+    // match the encoded ones.
     verify_encoding_epoch_end_header(
         &rotate_inputs.header_rotate_data.header_bytes,
         rotate_inputs.header_rotate_data.consensus_log_position,
@@ -27,18 +20,22 @@ pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH]
         rotate_inputs.header_rotate_data.pubkeys.clone(),
     );
 
+    // Compute new authority set hash from the public keys that are encoded in the epoch end header.
+    let new_authority_set_hash =
+        compute_authority_set_commitment(&rotate_inputs.header_rotate_data.pubkeys);
+
     // Return the ABI encoded RotateOutputs.
     RotateOutputs::abi_encode(&(
-        rotate_inputs.current_authority_set_id,
-        rotate_inputs.current_authority_set_hash,
+        rotate_inputs.justification.authority_set_id,
+        rotate_inputs.justification.current_authority_set_hash,
         new_authority_set_hash,
     ))
     .try_into()
     .unwrap()
 }
 
-/// Verify the encoded epoch end header is formatted correctly, and that the supplied pubkeys match
-/// the pubkeys encoded in the header.
+/// Verify the encoded epoch end header is formatted correctly, and that the new pubkeys used to compute
+/// the new authority set hash match the pubkeys encoded in the epoch end header.
 pub fn verify_encoding_epoch_end_header(
     header_bytes: &[u8],
     start_cursor: usize,
