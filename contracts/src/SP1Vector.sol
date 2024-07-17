@@ -108,7 +108,7 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
 
     /// @notice If the relayer check is enabled, only approved relayers can call the function.
     modifier onlyApprovedRelayer() {
-        if (!checkRelayer || approvedRelayers[msg.sender]) {
+        if (checkRelayer && !approvedRelayers[msg.sender]) {
             revert RelayerNotApproved();
         }
         _;
