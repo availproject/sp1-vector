@@ -1,23 +1,10 @@
 use alloy_primitives::B256;
-use blake2::digest::{Update, VariableOutput};
-use blake2::Blake2bVar;
+use alloy_sol_types::SolType;
 
 use crate::consts::HEADER_OUTPUTS_LENGTH;
 use crate::merkle::get_merkle_root_commitments;
 use crate::types::{DecodedHeaderData, HeaderRangeInputs, HeaderRangeOutputs};
-use crate::{decode_scale_compact_int, verify_justification};
-use alloy_sol_types::SolType;
-
-/// Blake2B hash of an encoded header. Note: This is a generic hash fn for any data.
-pub fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
-    const DIGEST_SIZE: usize = 32;
-    let mut hasher = Blake2bVar::new(DIGEST_SIZE).unwrap();
-    hasher.update(encoded_header);
-
-    let mut digest_bytes = [0u8; DIGEST_SIZE];
-    let _ = hasher.finalize_variable(&mut digest_bytes);
-    B256::from(digest_bytes)
-}
+use crate::{decode_scale_compact_int, hash_encoded_header, verify_justification};
 
 /// Verify the justification from the current authority set on target block and compute the
 /// state and data root commitments over the range [trusted_block + 1, target_block] inclusive.

@@ -59,6 +59,12 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     /// @notice The deployed SP1 verifier contract.
     ISP1Verifier public verifier;
 
+    /// @notice Approved relayers for the contract.
+    mapping(address => bool) public approvedRelayers;
+
+    /// @notice Check the relayer is approved.
+    bool public checkRelayer = false;
+
     /// @notice The type of proof that is being verified.
     enum ProofType {
         HeaderRangeProof,
@@ -98,6 +104,14 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         ProofType proofType;
         bytes headerRangeOutputs;
         bytes rotateOutputs;
+    }
+
+    /// @notice If the relayer check is enabled, only approved relayers can call the function.
+    modifier onlyApprovedRelayer() {
+        if (checkRelayer && !approvedRelayers[msg.sender]) {
+            revert RelayerNotApproved();
+        }
+        _;
     }
 
     function VERSION() external pure override returns (string memory) {
@@ -193,12 +207,17 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         latestAuthoritySetId = _endAuthoritySetId;
     }
 
+    /// @notice Set a relayer's approval status.
+    function setRelayerApproval(address _relayer, bool _approved) external onlyGuardian {
+        approvedRelayers[_relayer] = _approved;
+    }
+
     /// @notice Add target header hash, and data + state commitments for (latestBlock, targetBlock].
     /// @param proof The proof bytes for the SP1 proof.
     /// @param publicValues The public commitments from the SP1 proof.
     /// @dev The trusted block and requested block must have the same authority set id. If the target
     /// block is greater than the max batch size of the circuit, the proof will fail to generate.
-    function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external {
+    function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external onlyApprovedRelayer {
         if (frozen) {
             revert ContractFrozen();
         }
@@ -283,7 +302,7 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     /// @notice Adds the authority set hash for the next authority set id.
     /// @param proof The proof bytes for the SP1 proof.
     /// @param publicValues The public commitments from the SP1 proof.
-    function rotate(bytes calldata proof, bytes calldata publicValues) external {
+    function rotate(bytes calldata proof, bytes calldata publicValues) external onlyApprovedRelayer {
         if (frozen) {
             revert ContractFrozen();
         }
