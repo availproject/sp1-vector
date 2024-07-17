@@ -207,11 +207,6 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         latestAuthoritySetId = _endAuthoritySetId;
     }
 
-    /// @notice Approve a relayer.
-    function approveRelayer(address _relayer) external onlyGuardian {
-        approvedRelayers[_relayer] = true;
-    }
-
     /// @notice Set a relayer's approval status.
     function setRelayerApproval(address _relayer, bool _approved) external onlyGuardian {
         approvedRelayers[_relayer] = _approved;
