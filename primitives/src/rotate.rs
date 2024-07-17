@@ -36,7 +36,7 @@ pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH]
 
 /// Verify the encoded epoch end header is formatted correctly, and that the new pubkeys used to compute
 /// the new authority set hash match the pubkeys encoded in the epoch end header.
-pub fn verify_encoding_epoch_end_header(
+fn verify_encoding_epoch_end_header(
     header_bytes: &[u8],
     start_cursor: usize,
     num_authorities: u64,

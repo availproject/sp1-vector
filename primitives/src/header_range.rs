@@ -83,7 +83,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
 }
 
 /// Decode the header into a DecodedHeaderData struct manually.
-pub fn decode_header(header_bytes: Vec<u8>) -> DecodedHeaderData {
+fn decode_header(header_bytes: Vec<u8>) -> DecodedHeaderData {
     // The first 32 bytes are the parent hash.
     let mut cursor: usize = 32;
     let parent_hash = B256::from_slice(&header_bytes[..cursor]);

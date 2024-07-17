@@ -20,7 +20,7 @@ async fn main() -> anyhow::Result<()> {
     let trusted_block = 305130;
     let target_block = 305160;
 
-    let proof_type = ProofType::RotateProof;
+    let proof_type = ProofType::HeaderRangeProof;
 
     let fetcher = RpcDataFetcher::new().await;
     let mut stdin: SP1Stdin = SP1Stdin::new();
@@ -50,6 +50,7 @@ async fn main() -> anyhow::Result<()> {
     let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
 
     println!("Exeuction Report: {:?}", report);
+    println!("Total instructions: {}", report.total_instruction_count());
 
     Ok(())
 }

@@ -5,7 +5,7 @@ use alloy_primitives::B256;
 
 // Computes the simple Merkle root of the leaves. If the number of leaves is not a power of 2, pad
 // with empty 32 byte arrays till the next power of 2.
-pub fn get_merkle_root(leaves: Vec<B256>) -> B256 {
+fn get_merkle_root(leaves: Vec<B256>) -> B256 {
     // Return empty 32 byte array if there are no leaves.
     if leaves.is_empty() {
         return B256::from_slice(&[0u8; 32]);
@@ -65,13 +65,4 @@ pub fn get_merkle_root_commitments(
     let data_root_commitment = get_merkle_root(data_root_leaves);
 
     (state_root_commitment, data_root_commitment)
-}
-
-/// NOTE: ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
-pub fn get_merkle_tree_size(num_headers: u32) -> usize {
-    let mut size = 1;
-    while size < num_headers {
-        size *= 2;
-    }
-    size as usize
 }

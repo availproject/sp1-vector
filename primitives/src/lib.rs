@@ -1,33 +1,24 @@
+use alloy_primitives::B256;
 use blake2::{
     digest::{Update, VariableOutput},
     Blake2bVar,
 };
-
 use codec::{Compact, Decode, Encode};
-use ed25519_consensus::{Signature, VerificationKey};
-
-mod justification;
-pub use justification::verify_justification;
-pub mod merkle;
-pub mod types;
 use sha2::{Digest as Sha256Digest, Sha256};
+
+use crate::consts::{PUBKEY_LENGTH, VALIDATOR_LENGTH};
+
 pub mod consts;
 pub mod header_range;
+mod justification;
+pub mod merkle;
 pub mod rotate;
-use alloy_primitives::B256;
-use consts::{PUBKEY_LENGTH, VALIDATOR_LENGTH};
+pub mod types;
 
-/// Verify that a Ed25519 signature is valid. Panics if the signature is not valid.
-pub fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature: [u8; 64]) {
-    let pubkey: VerificationKey = VerificationKey::try_from(pubkey_bytes).unwrap();
-    let verified = pubkey.verify(&Signature::from(signature), signed_message);
-    if verified.is_err() {
-        panic!("Failed to verify Ed25519 signature.");
-    }
-}
+pub use justification::verify_justification;
 
 /// Blake2B hash of an encoded header. Note: This is a generic hash fn for any data.
-pub fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
+pub(crate) fn hash_encoded_header(encoded_header: &[u8]) -> B256 {
     const DIGEST_SIZE: usize = 32;
     let mut hasher = Blake2bVar::new(DIGEST_SIZE).unwrap();
     hasher.update(encoded_header);
@@ -49,41 +40,15 @@ pub fn compute_authority_set_commitment(pubkeys: &[B256]) -> B256 {
     B256::from_slice(&commitment_so_far)
 }
 
-/// Manually decode the precommit message from bytes and verify it is encoded correctly.
-pub fn decode_and_verify_precommit(precommit: Vec<u8>) -> ([u8; 32], u32, u64, u64) {
-    // The first byte should be a 1.
-    assert_eq!(precommit[0], 1);
-
-    // The next 32 bytes are the block hash.
-    let block_hash: [u8; 32] = precommit[1..33].try_into().unwrap();
-
-    // The next 4 bytes are the block number.
-    let block_number = &precommit[33..37];
-    // Convert the block number to a u32.
-    let block_number = u32::from_le_bytes(block_number.try_into().unwrap());
-
-    // The next 8 bytes are the justification round.
-    let round = &precommit[37..45];
-    // Convert the round to a u64.
-    let round = u64::from_le_bytes(round.try_into().unwrap());
-
-    // The next 8 bytes are the authority set id.
-    let authority_set_id = &precommit[45..53];
-    // Convert the authority set id to a u64.
-    let authority_set_id = u64::from_le_bytes(authority_set_id.try_into().unwrap());
-
-    (block_hash, block_number, round, authority_set_id)
-}
-
 /// Decode a SCALE-encoded compact int and get the value and the number of bytes it took to encode.
-pub fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
+pub(crate) fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
     let value = Compact::<u64>::decode(&mut bytes.as_slice())
         .expect("Failed to decode SCALE-encoded compact int.");
     (value.into(), value.encoded_size())
 }
 
 /// Verify that the encoded validators match the provided pubkeys, have the correct weight, and the
-/// delay is set to zero.
+/// delay is set to zero starting from the supplied cursor.
 pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubkeys: &Vec<B256>) {
     let mut cursor = start_cursor;
     for pubkey in pubkeys {

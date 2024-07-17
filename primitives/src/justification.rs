@@ -1,8 +1,18 @@
-use crate::{hash_encoded_header, types::CircuitJustification, verify_signature};
+use crate::{hash_encoded_header, types::CircuitJustification};
 use codec::Encode;
+use ed25519_consensus::{Signature, VerificationKey};
 use std::collections::HashMap;
 
 use alloy_primitives::B256;
+
+/// Verify that a Ed25519 signature is valid. Panics if the signature is not valid.
+fn verify_signature(pubkey_bytes: [u8; 32], signed_message: &[u8], signature: [u8; 64]) {
+    let pubkey: VerificationKey = VerificationKey::try_from(pubkey_bytes).unwrap();
+    let verified = pubkey.verify(&Signature::from(signature), signed_message);
+    if verified.is_err() {
+        panic!("Failed to verify Ed25519 signature.");
+    }
+}
 
 /// Confirm ancestry of a child block by traversing the ancestry_map until root_hash is reached.
 /// Sourced from https://github.com/availproject/avail-light/blob/main/core/src/finality.rs with some
