@@ -291,3 +291,41 @@ services:
         sync: false
       - key: KEY_ID
         sync: false
+  - type: worker
+    runtime: rust
+    name: sp1vector-chris-testing
+    repo: https://github.com/succinctlabs/sp1-vector
+    branch: chris/v1.0.9-testnet-addition
+    region: oregon
+    plan: standard
+    rootDir: script
+    buildCommand: rm -rf build.rs && cargo build --bin operator --release
+    startCommand: cargo run --bin operator --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://rpc-hex-devnet.avail.tools/ws
+      - key: AVAIL_CHAIN_ID
+        value: hex
+      - key: SP1_PROVER
+        value: network
+      - key: PROVER_NETWORK_RPC
+        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
+      - key: VECTORX_QUERY_URL
+        value: https://vectorx-query.succinct.xyz
+      - key: CHAIN_ID
+        value: 11155111
+      - key: CONTRACT_ADDRESS
+        value: 0xB068978A04e78e4C42dACB76f3AB123AbF1f6EdE
+      - key: RUST_LOG
+        value: info
+      - key: BLOCK_UPDATE_INTERVAL
+        value: 180
+      - key: LOOP_INTERVAL_MINS
+        value: 10
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
+        sync: false
+      - key: SP1_PRIVATE_KEY
+        sync: false
