@@ -396,7 +396,7 @@ impl VectorXOperator {
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
             vec![]
         } else {
-            let proof_str = proof.proof.try_as_plonk().unwrap().b
+            let proof_str = proof.public_values.
             // Strip the 0x prefix from proof_str, if it exists.
             hex::decode(proof_str.replace("0x", "")).unwrap()
         };
