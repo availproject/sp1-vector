@@ -45,7 +45,7 @@ async fn main() -> anyhow::Result<()> {
 
     let client = ProverClient::new();
 
-    let (pv, report) = client.execute(ELF, stdin)?;
+    let (pv, report) = client.execute(ELF, stdin).run()?;
 
     let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
 

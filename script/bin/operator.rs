@@ -17,7 +17,7 @@ use alloy::{
 use anyhow::Result;
 use log::{error, info};
 use services::input::RpcDataFetcher;
-use sp1_sdk::{ProverClient, SP1PlonkBn254Proof, SP1ProvingKey, SP1Stdin};
+use sp1_sdk::{PlonkBn254Proof, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin};
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
@@ -124,7 +124,7 @@ impl VectorXOperator {
         &self,
         trusted_block: u32,
         target_block: u32,
-    ) -> Result<SP1PlonkBn254Proof> {
+    ) -> Result<SP1ProofWithPublicValues> {
         let mut stdin: SP1Stdin = SP1Stdin::new();
 
         let fetcher = RpcDataFetcher::new().await;
@@ -153,10 +153,13 @@ impl VectorXOperator {
             trusted_block, target_block
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        self.client.prove(&self.pk, stdin).plonk().run()
     }
 
-    async fn request_rotate(&self, current_authority_set_id: u64) -> Result<SP1PlonkBn254Proof> {
+    async fn request_rotate(
+        &self,
+        current_authority_set_id: u64,
+    ) -> Result<SP1ProofWithPublicValues> {
         let fetcher = RpcDataFetcher::new().await;
 
         let mut stdin: SP1Stdin = SP1Stdin::new();
@@ -172,7 +175,7 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
-        self.client.prove_plonk(&self.pk, stdin)
+        self.client.prove(&self.pk, stdin).plonk().run()
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
@@ -387,12 +390,13 @@ impl VectorXOperator {
     }
 
     /// Relay a header range proof to the SP1 SP1Vector contract.
-    async fn relay_header_range(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
+    async fn relay_header_range(&self, proof: SP1ProofWithPublicValues) -> Result<B256> {
         // TODO: sp1_sdk should return empty bytes in mock mode.
+        
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
             vec![]
         } else {
-            let proof_str = proof.bytes();
+            let proof_str = proof.proof.try_as_plonk().unwrap().b
             // Strip the 0x prefix from proof_str, if it exists.
             hex::decode(proof_str.replace("0x", "")).unwrap()
         };
@@ -450,7 +454,7 @@ impl VectorXOperator {
     }
 
     /// Relay a rotate proof to the SP1 SP1Vector contract.
-    async fn relay_rotate(&self, proof: SP1PlonkBn254Proof) -> Result<B256> {
+    async fn relay_rotate(&self, proof: SP1ProofWithPublicValues) -> Result<B256> {
         // TODO: sp1_sdk should return empty bytes in mock mode.
         let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
             vec![]
