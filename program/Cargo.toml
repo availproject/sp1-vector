@@ -5,7 +5,7 @@ name = "sp1-vectorx-program"
 edition = "2021"
 
 [dependencies]
-sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", branch = "chris/v1.0.9-testnet" }
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1.git", tag = "v1.0.0-rc.1" }
 sp1-vector-primitives = { path = "../primitives" }
 alloy-sol-types = "0.7.5"
 
