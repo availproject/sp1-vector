@@ -212,6 +212,11 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         approvedRelayers[_relayer] = _approved;
     }
 
+    /// @notice Set a check relayer status.
+    function setCheckRelayer(bool _checkRelayer) external onlyGuardian {
+        checkRelayer = _checkRelayer;
+    }
+
     /// @notice Add target header hash, and data + state commitments for (latestBlock, targetBlock].
     /// @param proof The proof bytes for the SP1 proof.
     /// @param publicValues The public commitments from the SP1 proof.
