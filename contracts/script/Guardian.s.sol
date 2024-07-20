@@ -16,8 +16,7 @@ import {BaseScript} from "./Base.s.sol";
 // Required environment variables:
 // - CHAINS (comma separated list of chain names)
 // - CONTRACT_ADDRESS_{CHAIN_ID}
-// - SP1_VECTOR_PROGRAM_VKEY
-// - SP1_VERIFIER_ADDRESS
+// - GUARDIAN_ADDRESS
 
 contract UpgradeScript is BaseScript {
     using stdJson for string;
@@ -38,8 +37,8 @@ contract UpgradeScript is BaseScript {
         sp1Vector.grantRole(sp1Vector.GUARDIAN_ROLE(), guardian);
         sp1Vector.grantRole(sp1Vector.TIMELOCK_ROLE(), guardian);
 
-        // Removes roles from 0xded.
-        sp1Vector.revokeRole(sp1Vector.DEFAULT_ADMIN_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
+        // // Removes roles from 0xded.
+        // sp1Vector.revokeRole(sp1Vector.DEFAULT_ADMIN_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
         sp1Vector.revokeRole(sp1Vector.GUARDIAN_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
         sp1Vector.revokeRole(sp1Vector.TIMELOCK_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
     }
