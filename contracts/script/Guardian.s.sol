@@ -24,23 +24,23 @@ contract UpgradeScript is BaseScript {
 
     function setUp() public {}
 
-    string internal constant KEY = "UpgradeScript";
+    string internal constant KEY = "GuardianScript";
 
     /// Reads CONTRACT_ADDRESS_<CHAIN_ID> from the environment variables and updates the SP1 Verifier and program vkey.
     function run() external multichain(KEY) broadcaster {
         string memory contractAddressKey = string.concat("CONTRACT_ADDRESS_", vm.toString(block.chainid));
         address existingProxyAddress = vm.envAddress(contractAddressKey);
 
+        // Grant roles to multi-sig.
         SP1Vector sp1Vector = SP1Vector(address(existingProxyAddress));
+        address guardian = vm.envAddress("GUARDIAN_ADDRESS");
+        sp1Vector.grantRole(sp1Vector.DEFAULT_ADMIN_ROLE(), guardian);
+        sp1Vector.grantRole(sp1Vector.GUARDIAN_ROLE(), guardian);
+        sp1Vector.grantRole(sp1Vector.TIMELOCK_ROLE(), guardian);
 
-        // Deploy new SP1Vector implementation.
-        SP1Vector newImplementation = new SP1Vector();
-        sp1Vector.upgradeTo(address(newImplementation));
-
-        // Set the approved relayer.
-        sp1Vector.setCheckRelayer(true);
-        sp1Vector.setRelayerApproval(vm.envAddress("RELAYER_ADDRESS"), true);
-
-        sp1Vector.updateVectorXProgramVkey(vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY"));
+        // Removes roles from 0xded.
+        sp1Vector.revokeRole(sp1Vector.DEFAULT_ADMIN_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
+        sp1Vector.revokeRole(sp1Vector.GUARDIAN_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
+        sp1Vector.revokeRole(sp1Vector.TIMELOCK_ROLE(), 0xDEd0000E32f8F40414d3ab3a830f735a3553E18e);
     }
 }

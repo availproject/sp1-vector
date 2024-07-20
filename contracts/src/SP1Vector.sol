@@ -63,7 +63,7 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     mapping(address => bool) public approvedRelayers;
 
     /// @notice Check the relayer is approved.
-    bool public checkRelayer = true;
+    bool public checkRelayer;
 
     /// @notice The type of proof that is being verified.
     enum ProofType {
@@ -210,6 +210,11 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     /// @notice Set a relayer's approval status.
     function setRelayerApproval(address _relayer, bool _approved) external onlyGuardian {
         approvedRelayers[_relayer] = _approved;
+    }
+
+    /// @notice Set a check relayer status.
+    function setCheckRelayer(bool _checkRelayer) external onlyGuardian {
+        checkRelayer = _checkRelayer;
     }
 
     /// @notice Add target header hash, and data + state commitments for (latestBlock, targetBlock].
