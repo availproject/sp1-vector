@@ -67,15 +67,31 @@ pub struct KMSRelayResponse {
 /// Relay a transaction with KMS and return the transaction hash with retries.
 /// Requires SECURE_RELAYER_ENDPOINT and SECURE_RELAYER_API_KEY to be set in the environment.
 pub async fn relay_with_kms(args: &KMSRelayRequest, num_retries: u32) -> Result<B256> {
-    let mut num_retries = num_retries;
-    while num_retries > 0 {
+    for attempt in 1..=num_retries {
         let response = send_kms_relay_request(args).await?;
-        if response.status == KMSRelayStatus::Relayed as u32 {
-            return Ok(B256::from_str(&response.transaction_hash.unwrap())?);
+        match response.status {
+            status if status == KMSRelayStatus::Relayed as u32 => {
+                return Ok(B256::from_str(
+                    &response
+                        .transaction_hash
+                        .ok_or_else(|| anyhow::anyhow!("Missing transaction hash"))?,
+                )?);
+            }
+            _ => {
+                let error_message = response
+                    .message
+                    .expect("KMS request always returns a message");
+                log::warn!("KMS relay attempt {} failed: {}", attempt, error_message);
+                if attempt == num_retries {
+                    return Err(anyhow::anyhow!(
+                        "Failed to relay transaction: {}",
+                        error_message
+                    ));
+                }
+            }
         }
-        num_retries -= 1;
     }
-    Err(anyhow::anyhow!("Transaction reverted!"))
+    unreachable!("Loop should have returned or thrown an error")
 }
 
 /// Send a KMS relay request and get the response.
