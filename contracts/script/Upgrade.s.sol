@@ -33,13 +33,12 @@ contract UpgradeScript is BaseScript {
 
         SP1Vector sp1Vector = SP1Vector(address(existingProxyAddress));
 
-        // // Update the SP1 Verifier address and the program vkey.
-        // if (vm.envBool("MOCK")) {
-        //     SP1MockVerifier mockVerifier = new SP1MockVerifier();
-        //     sp1Vector.updateVerifier(address(mockVerifier));
-        // } else {
-        //     sp1Vector.updateVerifier(vm.envAddress("SP1_VERIFIER_ADDRESS"));
-        // }
+        // Deploy new SP1Vector implementation.
+        SP1Vector newImplementation = new SP1Vector();
+        sp1Vector.upgradeTo(address(newImplementation));
+
+        // Set the approved relayer.
+        sp1Vector.setRelayerApproval(vm.envAddress("RELAYER_ADDRESS"), true);
 
         sp1Vector.updateVectorXProgramVkey(vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY"));
     }

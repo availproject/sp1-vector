@@ -63,7 +63,7 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
     mapping(address => bool) public approvedRelayers;
 
     /// @notice Check the relayer is approved.
-    bool public checkRelayer = false;
+    bool public checkRelayer = true;
 
     /// @notice The type of proof that is being verified.
     enum ProofType {
