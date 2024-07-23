@@ -257,7 +257,7 @@ services:
       - key: RUST_LOG
         value: info
       - key: BLOCK_UPDATE_INTERVAL
-        value: 1440
+        value: 360
       - key: LOOP_INTERVAL_MINS
         value: 20
       - key: PRIVATE_KEY
