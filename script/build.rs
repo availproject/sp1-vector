@@ -1,5 +1,6 @@
 use sp1_helper::build_program;
 
 fn main() {
-    build_program("../program");
+    // TODO: Use Docker for reproducible builds.
+    // build_program("../program");
 }

@@ -1,7 +1,7 @@
 //! A simple script to test the generation of proofs.
 
 use alloy::sol_types::SolType;
-use services::input::RpcDataFetcher;
+use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
 use sp1_vector_primitives::types::{ProofOutput, ProofType};
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
@@ -29,7 +29,12 @@ async fn main() -> anyhow::Result<()> {
     match proof_type {
         ProofType::HeaderRangeProof => {
             let header_range_inputs = fetcher
-                .get_header_range_inputs(trusted_block, target_block, Some(512))
+                .get_header_range_inputs(HeaderRangeRequestData {
+                    trusted_block,
+                    target_block,
+                    is_target_epoch_end_block: false,
+                },
+                Some(512))
                 .await;
 
             stdin.write(&proof_type);

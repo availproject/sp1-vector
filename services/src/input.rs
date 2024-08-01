@@ -29,6 +29,14 @@ pub struct RpcDataFetcher {
     pub vectorx_query_url: Option<String>,
 }
 
+/// Data for the header range request.
+#[derive(Debug, Clone, Copy)]
+pub struct HeaderRangeRequestData {
+    pub trusted_block: u32,
+    pub target_block: u32,
+    pub is_target_epoch_end_block: bool,
+}
+
 impl RpcDataFetcher {
     pub async fn new() -> Self {
         dotenv::dotenv().ok();
@@ -103,15 +111,14 @@ impl RpcDataFetcher {
     /// If not passed in, it will be set to the nearest power of 2.
     pub async fn get_header_range_inputs(
         &self,
-        trusted_block: u32,
-        target_block: u32,
+        header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
-        let trusted_header = self.get_header(trusted_block).await;
+        let trusted_header = self.get_header(header_range_request_data.trusted_block).await;
         let trusted_header_hash: alloy_primitives::FixedBytes<32> =
             B256::from_slice(&trusted_header.hash().0);
 
-        let num_headers = target_block - trusted_block + 1;
+        let num_headers = header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
         let merkle_tree_size: usize;
         if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
             assert!(
@@ -126,18 +133,18 @@ impl RpcDataFetcher {
         }
 
         let headers = self
-            .get_block_headers_range(trusted_block, target_block)
+            .get_block_headers_range(header_range_request_data.trusted_block, header_range_request_data.target_block)
             .await;
         let encoded_headers: Vec<Vec<u8>> = headers.iter().map(|header| header.encode()).collect();
 
-        let (target_justification, _) = self
-            .get_justification_data_for_block(target_block)
+        let target_justification = self
+            .get_justification_data_for_block(header_range_request_data.target_block, header_range_request_data.is_target_epoch_end_block)
             .await
             .expect("Failed to get justification data for target block.");
 
         HeaderRangeInputs {
-            trusted_block,
-            target_block,
+            trusted_block: header_range_request_data.trusted_block,
+            target_block: header_range_request_data.target_block,
             trusted_header_hash,
             merkle_tree_size,
             encoded_headers,
@@ -337,21 +344,23 @@ impl RpcDataFetcher {
     pub async fn get_justification_data_for_block(
         &self,
         block_number: u32,
-    ) -> Option<(CircuitJustification, Header)> {
-        let grandpa_justification = self.get_justification(block_number).await;
+        is_epoch_end_block: bool,
+    ) -> Option<CircuitJustification> {
+        let grandpa_justification = match is_epoch_end_block {
+            true => self.get_justification_data_for_block_unsafe(block_number).await,
+            false => self.get_justification(block_number).await,
+        };
 
         if grandpa_justification.is_err() {
             return None;
         }
         let grandpa_justification = grandpa_justification.unwrap();
 
-        let header = self.get_header(block_number).await;
-
         // Convert DB stored justification into CircuitJustification.
         let circuit_justification = self
             .compute_data_from_justification(grandpa_justification, block_number)
             .await;
-        Some((circuit_justification, header))
+        Some(circuit_justification)
     }
 
     /// Get the latest justification data. Because Avail does not store the justification data for
@@ -388,19 +397,8 @@ impl RpcDataFetcher {
         panic!("No justification found")
     }
 
-    /// Get the justification data for an epoch end block from the curr_authority_set_id to the next authority set id.
-    /// Fetch the authority set and justification proof for the last block in the current epoch. If the finality proof is a
-    /// simple justification, return a CircuitJustification with the encoded precommit that all
-    /// authorities sign, the validator signatures, and the authority set's pubkeys.
-    pub async fn get_justification_data_epoch_end_block(
-        &self,
-        curr_authority_set_id: u64,
-    ) -> CircuitJustification {
-        let epoch_end_block = self.last_justified_block(curr_authority_set_id).await;
-        if epoch_end_block == 0 {
-            panic!("Current authority set is still active!");
-        }
-
+    /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
+    pub async fn get_justification_data_for_block_unsafe(&self, epoch_end_block: u32) -> Result<GrandpaJustification> {
         // If epoch end block, use grandpa_proveFinality to get the justification.
         let mut params = RpcParams::new();
         let _ = params.push(epoch_end_block);
@@ -417,8 +415,25 @@ impl RpcDataFetcher {
         let justification: GrandpaJustification =
             Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
 
-        self.compute_data_from_justification(justification, epoch_end_block)
-            .await
+        Ok(justification)
+
+    }
+
+    /// Get the justification data for an epoch end block from the curr_authority_set_id to the next authority set id.
+    /// Fetch the authority set and justification proof for the last block in the current epoch. If the finality proof is a
+    /// simple justification, return a CircuitJustification with the encoded precommit that all
+    /// authorities sign, the validator signatures, and the authority set's pubkeys.
+    pub async fn get_justification_data_epoch_end_block(
+        &self,
+        curr_authority_set_id: u64,
+    ) -> CircuitJustification {
+        let epoch_end_block = self.last_justified_block(curr_authority_set_id).await;
+        if epoch_end_block == 0 {
+            panic!("Current authority set is still active!");
+        }
+
+        let grandpa_justification = self.get_justification_data_for_block_unsafe(epoch_end_block).await.expect("No justification found");
+        self.compute_data_from_justification(grandpa_justification, epoch_end_block).await
     }
 
     /// This function takes in a block_number as input, and fetches the new authority set specified

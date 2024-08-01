@@ -16,7 +16,7 @@ use alloy::{
 
 use anyhow::Result;
 use log::{error, info};
-use services::input::RpcDataFetcher;
+use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{
     HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
@@ -126,8 +126,7 @@ impl VectorXOperator {
 
     async fn request_header_range(
         &self,
-        trusted_block: u32,
-        target_block: u32,
+        header_range_request: HeaderRangeRequestData,
     ) -> Result<SP1ProofWithPublicValues> {
         let mut stdin: SP1Stdin = SP1Stdin::new();
 
@@ -143,8 +142,7 @@ impl VectorXOperator {
             .unwrap();
         let header_range_inputs = fetcher
             .get_header_range_inputs(
-                trusted_block,
-                target_block,
+                header_range_request,
                 Some(output.headerRangeCommitmentTreeSize),
             )
             .await;
@@ -154,7 +152,7 @@ impl VectorXOperator {
 
         info!(
             "Requesting header range proof from block {} to block {}.",
-            trusted_block, target_block
+            header_range_request.trusted_block, header_range_request.target_block
         );
 
         self.client.prove(&self.pk, stdin).plonk().run()
@@ -205,7 +203,10 @@ impl VectorXOperator {
     }
 
     // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
-    async fn find_header_range(&self, ideal_block_interval: u32) -> Result<Option<(u32, u32)>> {
+    async fn find_header_range(
+        &self,
+        ideal_block_interval: u32,
+    ) -> Result<Option<HeaderRangeRequestData>> {
         let header_range_contract_data = self.get_contract_data_for_header_range().await?;
 
         let fetcher = RpcDataFetcher::new().await;
@@ -215,8 +216,10 @@ impl VectorXOperator {
             .get_authority_set_id(header_range_contract_data.vectorx_latest_block - 1)
             .await;
 
+        println!("current_authority_set_id: {}", current_authority_set_id);
         // Get the last justified block by the current authority set id.
         let last_justified_block = fetcher.last_justified_block(current_authority_set_id).await;
+        println!("last_justified_block: {}", last_justified_block);
 
         // If this is the last justified block, check for header range with next authority set.
         let mut request_authority_set_id = current_authority_set_id;
@@ -250,10 +253,11 @@ impl VectorXOperator {
         println!("block_to_step_to: {:?}", block_to_step_to);
 
         if let Some(block_to_step_to) = block_to_step_to {
-            return Ok(Some((
-                header_range_contract_data.vectorx_latest_block,
-                block_to_step_to,
-            )));
+            return Ok(Some(HeaderRangeRequestData {
+                trusted_block: header_range_contract_data.vectorx_latest_block,
+                target_block: block_to_step_to,
+                is_target_epoch_end_block: block_to_step_to == last_justified_block,
+            }));
         }
         Ok(None)
     }
@@ -381,7 +385,7 @@ impl VectorXOperator {
             }
 
             if fetcher
-                .get_justification_data_for_block(block_to_step_to)
+                .get_justification_data_for_block(block_to_step_to, false)
                 .await
                 .is_some()
             {
@@ -444,6 +448,8 @@ impl VectorXOperator {
                 .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
                 .get_receipt()
                 .await?;
+
+            log::debug!("Receipt: {:?}", receipt);
 
             // If status is false, it reverted.
             if !receipt.status() {
@@ -569,15 +575,13 @@ impl VectorXOperator {
 
             if let Some(header_range_request) = header_range_request {
                 // Request the header range proof to block_to_step_to.
-                let proof = self
-                    .request_header_range(header_range_request.0, header_range_request.1)
-                    .await;
+                let proof = self.request_header_range(header_range_request).await;
                 match proof {
                     Ok(proof) => {
                         let tx_hash = self.relay_header_range(proof).await?;
                         info!(
                             "Posted data commitment from block {} to block {}\nTransaction hash: {}",
-                            header_range_request.0, header_range_request.1, tx_hash
+                            header_range_request.trusted_block, header_range_request.target_block, tx_hash
                         );
                     }
                     Err(e) => {
