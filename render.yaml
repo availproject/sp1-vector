@@ -76,7 +76,7 @@ services:
     rootDir: services
     buildCommand: cargo build --bin indexer --release
     startCommand: cargo run --bin indexer --release
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: AVAIL_URL
         value: wss://rpc-hex-devnet.avail.tools/ws
@@ -213,7 +213,7 @@ services:
     rootDir: services
     buildCommand: cargo build --bin indexer --release
     startCommand: cargo run --bin indexer --release
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: AVAIL_URL
         value: wss://turing-rpc.avail.so/ws
@@ -241,7 +241,7 @@ services:
     autoDeploy: true
     envVars:
       - key: AVAIL_URL
-        sync: false
+        value: wss://zenitsu-rpc.slowops.xyz/ws
       - key: AVAIL_CHAIN_ID
         value: mainnet
       - key: SP1_PROVER
@@ -257,9 +257,9 @@ services:
       - key: RUST_LOG
         value: info
       - key: BLOCK_UPDATE_INTERVAL
-        value: 1440
+        value: 300
       - key: LOOP_INTERVAL_MINS
-        value: 20
+        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
@@ -275,10 +275,85 @@ services:
     rootDir: services
     buildCommand: cargo build --bin indexer --release
     startCommand: cargo run --bin indexer --release
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: AVAIL_URL
         sync: false
+      - key: AVAIL_CHAIN_ID
+        value: mainnet
+      - key: RUST_LOG
+        value: info
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: KEY_ID
+        sync: false
+  - type: worker
+    runtime: rust
+    name: indexer-mainnet-new
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: services
+    buildCommand: cargo build --bin indexer --release
+    startCommand: cargo run --bin indexer --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://zenitsu-rpc.slowops.xyz/ws
+      - key: AVAIL_CHAIN_ID
+        value: mainnet
+      - key: RUST_LOG
+        value: info
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: KEY_ID
+        sync: false
+  - type: worker
+    runtime: rust
+    name: indexer-turing-new
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: services
+    buildCommand: cargo build --bin indexer --release
+    startCommand: cargo run --bin indexer --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://turing-rpc.avail.so/ws
+      - key: AVAIL_CHAIN_ID
+        value: mainnet
+      - key: RUST_LOG
+        value: info
+      - key: AWS_ACCESS_KEY_ID
+        sync: false
+      - key: AWS_REGION
+        sync: false
+      - key: AWS_SECRET_ACCESS_KEY
+        sync: false
+      - key: KEY_ID
+        sync: false
+  - type: worker
+    runtime: rust
+    name: indexer-hex-new
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: services
+    buildCommand: cargo build --bin indexer --release
+    startCommand: cargo run --bin indexer --release
+    autoDeploy: true
+    envVars:
+      - key: AVAIL_URL
+        value: wss://rpc-hex-devnet.avail.tools/ws
       - key: AVAIL_CHAIN_ID
         value: mainnet
       - key: RUST_LOG
