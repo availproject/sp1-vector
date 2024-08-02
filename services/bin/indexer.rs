@@ -41,6 +41,7 @@ impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
     }
 }
 
+/// When the subscription yields events, add them to the indexer DB.
 async fn handle_subscription(
     sub: &mut RpcSubscription<AvailSubscriptionGrandpaJustification>,
     aws_client: &AWSClient,
