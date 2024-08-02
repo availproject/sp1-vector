@@ -64,15 +64,15 @@ async fn handle_subscription(
             },
             Ok(None) => {
                 error!("Subscription ended unexpectedly");
-                break;
+                return;
             },
             Ok(Some(Err(e))) => {
                 error!("Error in subscription: {:?}", e);
-                break;
+                return;
             },
             Err(_) => {
                 error!("Timeout reached. No event received in the last minute.");
-                break;
+                return;
             }
         }
     }
