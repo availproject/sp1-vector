@@ -1,7 +1,7 @@
 use avail_subxt::primitives::Header;
 use avail_subxt::RpcParams;
 use codec::Decode;
-use log::debug;
+use log::{debug, error};
 use serde::de::Error;
 use serde::Deserialize;
 use services::aws::AWSClient;
@@ -41,8 +41,45 @@ impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
     }
 }
 
-async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClient) {
-    let sub: Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, _> = fetcher
+async fn handle_subscription(
+    sub: &mut RpcSubscription<AvailSubscriptionGrandpaJustification>,
+    aws_client: &AWSClient,
+    fetcher: &RpcDataFetcher,
+    timeout_duration: std::time::Duration,
+) {
+    loop {
+        match tokio::time::timeout(timeout_duration, sub.next()).await {
+            Ok(Some(Ok(justification))) => {
+                debug!(
+                    "New justification from block {}",
+                    justification.commit.target_number
+                );
+                if let Err(e) = aws_client
+                    .add_justification(&fetcher.avail_chain_id, justification.into())
+                    .await
+                {
+                    error!("Error adding justification to AWS: {:?}", e);
+                }
+            },
+            Ok(None) => {
+                error!("Subscription ended unexpectedly");
+                break;
+            },
+            Ok(Some(Err(e))) => {
+                error!("Error in subscription: {:?}", e);
+                break;
+            },
+            Err(_) => {
+                error!("Timeout reached. No event received in the last minute.");
+                break;
+            }
+        }
+    }
+}
+
+/// Initialize the subscription for the grandpa justification events.
+async fn initialize_subscription(fetcher: &RpcDataFetcher) -> Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, subxt::Error> {
+    fetcher
         .client
         .rpc()
         .subscribe(
@@ -50,20 +87,30 @@ async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClien
             RpcParams::new(),
             "grandpa_unsubscribeJustifications",
         )
-        .await;
-    let mut sub = sub.unwrap();
+        .await
+}
 
-    // Wait for new justification.
-    while let Some(Ok(justification)) = sub.next().await {
-        debug!(
-            "New justification from block {}",
-            justification.commit.target_number
-        );
+/// Listen for justifications. If the subscription fails to yield a justification within the timeout,
+/// it will re-initialize the subscription.
+async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClient) {
+    // Avail's block time is 20 seconds, as long as this is greater than that, we should be fine.
+    let timeout_duration = std::time::Duration::from_secs(60);
+    // Time to wait before retrying the subscription.
+    let retry_delay = std::time::Duration::from_secs(5);
 
-        aws_client
-            .add_justification(&fetcher.avail_chain_id, justification.into())
-            .await
-            .unwrap();
+    loop {
+        match initialize_subscription(&fetcher).await {
+            Ok(mut sub) => {
+                debug!("Subscription initialized successfully");
+                handle_subscription(&mut sub, &aws_client, &fetcher, timeout_duration).await;
+            },
+            Err(e) => {
+                debug!("Failed to initialize subscription: {:?}", e);
+            }
+        }
+
+        debug!("Retrying subscription in {} seconds", retry_delay.as_secs());
+        tokio::time::sleep(retry_delay).await;
     }
 }
 
