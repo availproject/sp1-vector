@@ -24,6 +24,9 @@ use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
 
+// If the SP1 proof takes too long to respond, time out.
+const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
+
 sol! {
     #[allow(missing_docs)]
     #[sol(rpc)]
@@ -155,7 +158,7 @@ impl VectorXOperator {
             header_range_request.trusted_block, header_range_request.target_block
         );
 
-        self.client.prove(&self.pk, stdin).plonk().run()
+        self.client.prove(&self.pk, stdin).plonk().timeout(Duration::from_secs(PROOF_TIMEOUT_SECS)).run()
     }
 
     async fn request_rotate(
@@ -177,7 +180,7 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
-        self.client.prove(&self.pk, stdin).plonk().run()
+        self.client.prove(&self.pk, stdin).plonk().timeout(Duration::from_secs(PROOF_TIMEOUT_SECS)).run()
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.

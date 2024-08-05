@@ -114,11 +114,14 @@ impl RpcDataFetcher {
         header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
-        let trusted_header = self.get_header(header_range_request_data.trusted_block).await;
+        let trusted_header = self
+            .get_header(header_range_request_data.trusted_block)
+            .await;
         let trusted_header_hash: alloy_primitives::FixedBytes<32> =
             B256::from_slice(&trusted_header.hash().0);
 
-        let num_headers = header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
+        let num_headers =
+            header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
         let merkle_tree_size: usize;
         if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
             assert!(
@@ -133,12 +136,18 @@ impl RpcDataFetcher {
         }
 
         let headers = self
-            .get_block_headers_range(header_range_request_data.trusted_block, header_range_request_data.target_block)
+            .get_block_headers_range(
+                header_range_request_data.trusted_block,
+                header_range_request_data.target_block,
+            )
             .await;
         let encoded_headers: Vec<Vec<u8>> = headers.iter().map(|header| header.encode()).collect();
 
         let target_justification = self
-            .get_justification_data_for_block(header_range_request_data.target_block, header_range_request_data.is_target_epoch_end_block)
+            .get_justification_data_for_block(
+                header_range_request_data.target_block,
+                header_range_request_data.is_target_epoch_end_block,
+            )
             .await
             .expect("Failed to get justification data for target block.");
 
@@ -347,7 +356,10 @@ impl RpcDataFetcher {
         is_epoch_end_block: bool,
     ) -> Option<CircuitJustification> {
         let grandpa_justification = match is_epoch_end_block {
-            true => self.get_justification_data_for_block_unsafe(block_number).await,
+            true => {
+                self.get_justification_data_for_block_unsafe(block_number)
+                    .await
+            }
             false => self.get_justification(block_number).await,
         };
 
@@ -398,7 +410,10 @@ impl RpcDataFetcher {
     }
 
     /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
-    pub async fn get_justification_data_for_block_unsafe(&self, epoch_end_block: u32) -> Result<GrandpaJustification> {
+    pub async fn get_justification_data_for_block_unsafe(
+        &self,
+        epoch_end_block: u32,
+    ) -> Result<GrandpaJustification> {
         // If epoch end block, use grandpa_proveFinality to get the justification.
         let mut params = RpcParams::new();
         let _ = params.push(epoch_end_block);
@@ -416,7 +431,6 @@ impl RpcDataFetcher {
             Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
 
         Ok(justification)
-
     }
 
     /// Get the justification data for an epoch end block from the curr_authority_set_id to the next authority set id.
@@ -432,8 +446,12 @@ impl RpcDataFetcher {
             panic!("Current authority set is still active!");
         }
 
-        let grandpa_justification = self.get_justification_data_for_block_unsafe(epoch_end_block).await.expect("No justification found");
-        self.compute_data_from_justification(grandpa_justification, epoch_end_block).await
+        let grandpa_justification = self
+            .get_justification_data_for_block_unsafe(epoch_end_block)
+            .await
+            .expect("No justification found");
+        self.compute_data_from_justification(grandpa_justification, epoch_end_block)
+            .await
     }
 
     /// This function takes in a block_number as input, and fetches the new authority set specified
@@ -564,7 +582,6 @@ mod tests {
     use super::*;
 
     #[tokio::test]
-    #[cfg_attr(feature = "ci", ignore)]
     async fn test_get_simple_justification_change_authority_set() {
         let fetcher = RpcDataFetcher::new().await;
 
@@ -588,7 +605,6 @@ mod tests {
     }
 
     #[tokio::test]
-    #[cfg_attr(feature = "ci", ignore)]
     async fn test_get_new_authority_set() {
         dotenv::dotenv().ok();
         env_logger::init();
