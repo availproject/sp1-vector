@@ -8606,18 +8606,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sp1-build"
-version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "260c285956e8205d332c9a5acbd828462399b04caf72d0620718a20447bac91d"
-dependencies = [
- "anyhow",
- "cargo_metadata",
- "clap 4.5.13",
- "dirs",
-]
-
-[[package]]
 name = "sp1-core"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8694,12 +8682,13 @@ dependencies = [
 [[package]]
 name = "sp1-helper"
 version = "1.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71dce2545791b5c0c2e65f81eb76d74d51804cbbe758643978dc0bbcdbbaa127"
+source = "git+https://github.com/succinctlabs/sp1.git?branch=ratan/consolidate-helper-build#5f99c287ec9d1606c8d8a933483bb6908f7eb7b7"
 dependencies = [
+ "anyhow",
  "cargo_metadata",
  "chrono",
- "sp1-build",
+ "clap 4.5.13",
+ "dirs",
 ]
 
 [[package]]
