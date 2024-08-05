@@ -6,7 +6,7 @@ use avail_subxt::config::Header;
 use clap::Parser;
 use services::input::RpcDataFetcher;
 use sp1_sdk::{HashableKey, ProverClient};
-const VECTORX_ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
+use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 #[derive(Parser, Debug, Clone)]
 #[command(about = "Get the genesis parameters from a block.")]
@@ -21,7 +21,7 @@ const HEADER_RANGE_COMMITMENT_TREE_SIZE: u32 = 1024;
 async fn main() -> anyhow::Result<()> {
     let fetcher = RpcDataFetcher::new().await;
     let client = ProverClient::new();
-    let (_pk, vk) = client.setup(VECTORX_ELF);
+    let (_pk, vk) = client.setup(SP1_VECTOR_ELF);
 
     let args = GenesisArgs::parse();
 

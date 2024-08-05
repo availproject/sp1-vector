@@ -4,7 +4,7 @@ use alloy::sol_types::SolType;
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
 use sp1_vector_primitives::types::{ProofOutput, ProofType};
-const ELF: &[u8] = include_bytes!("../../program/elf/riscv32im-succinct-zkvm-elf");
+use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 // Requires the following environment variables to be set:
 // - AVAIL_URL: The URL of the Avail RPC endpoint.
@@ -29,12 +29,14 @@ async fn main() -> anyhow::Result<()> {
     match proof_type {
         ProofType::HeaderRangeProof => {
             let header_range_inputs = fetcher
-                .get_header_range_inputs(HeaderRangeRequestData {
-                    trusted_block,
-                    target_block,
-                    is_target_epoch_end_block: false,
-                },
-                Some(512))
+                .get_header_range_inputs(
+                    HeaderRangeRequestData {
+                        trusted_block,
+                        target_block,
+                        is_target_epoch_end_block: false,
+                    },
+                    Some(512),
+                )
                 .await;
 
             stdin.write(&proof_type);
@@ -50,7 +52,7 @@ async fn main() -> anyhow::Result<()> {
 
     let client = ProverClient::new();
 
-    let (pv, report) = client.execute(ELF, stdin).run()?;
+    let (pv, report) = client.execute(SP1_VECTOR_ELF, stdin).run()?;
 
     let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
 
