@@ -2,7 +2,7 @@
 
 ## Overview
 
-Implementation of [Vector X](https://github.com/succinctlabs/vectorx) in Rust for SP1.
+Implementation of zero-knowledge proof circuits for [Vector](https://blog.availproject.org/data-attestation-bridge/), Avail's Data Attestation Bridge in SP1.
 
 - `/program`: The SP1 Vector program.
 - `/primitives`: Libraries for types and helper functions used in the program.
