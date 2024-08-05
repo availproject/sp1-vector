@@ -1,18 +1,17 @@
-[workspace]
 [package]
 version = "0.1.0"
 name = "sp1-vector-primitives"
 edition = "2021"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-sha2 = { version = "0.10.8", default-features = false }
-ed25519-consensus = { version = "2.1", default-features = false }
-codec = { package = "parity-scale-codec", version = "3", default-features = false }
-alloy-primitives = { version = "0.7.5", features = ["serde"] }
-alloy-sol-types = "0.7.5"
-blake2 = "0.10.6"
-itertools = "0.10.5"
+serde.workspace = true
+sha2.workspace = true
+ed25519-consensus.workspace = true
+codec.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+blake2.workspace = true
+itertools.workspace = true
 
 [dev-dependencies]
 primitive-types = "0.12.2"

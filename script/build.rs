@@ -1,6 +1,13 @@
-use sp1_helper::build_program;
+use sp1_helper::{build_program_with_args, BuildArgs};
 
 fn main() {
-    // TODO: Use Docker for reproducible builds.
-    // build_program("../program");
+    println!("Building program...");
+    build_program_with_args(
+        "../program",
+        BuildArgs {
+            docker: true,
+            ..Default::default()
+        },
+    );
+    println!("Program built successfully!");
 }
