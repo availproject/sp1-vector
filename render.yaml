@@ -111,7 +111,7 @@ services:
       - key: SP1_PROVER
         value: network
       - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
@@ -148,7 +148,7 @@ services:
       - key: SP1_PROVER
         value: network
       - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
@@ -185,7 +185,7 @@ services:
       - key: SP1_PROVER
         value: network
       - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
@@ -247,7 +247,7 @@ services:
       - key: SP1_PROVER
         value: network
       - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
+        value: https://rpc-staging.succinct.xyz
       - key: VECTORX_QUERY_URL
         value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
