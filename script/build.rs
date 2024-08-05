@@ -1,7 +1,7 @@
 use sp1_helper::{build_program_with_args, BuildArgs};
 
 fn main() {
-    // TODO: Re-add this once the Docker changes are merged with a new release.
+    // TODO: Re-add this once the Docker changes are merged with a new SP1 release.
     // println!("Building program...");
     // build_program_with_args(
     //     "../program",
