@@ -1,7 +1,7 @@
 use avail_subxt::primitives::Header;
 use avail_subxt::RpcParams;
 use codec::Decode;
-use log::{debug, error};
+use log::{debug, error, info};
 use serde::de::Error;
 use serde::Deserialize;
 use services::aws::AWSClient;
@@ -62,15 +62,15 @@ async fn handle_subscription(
                 {
                     error!("Error adding justification to AWS: {:?}", e);
                 }
-            },
+            }
             Ok(None) => {
                 error!("Subscription ended unexpectedly");
                 return;
-            },
+            }
             Ok(Some(Err(e))) => {
                 error!("Error in subscription: {:?}", e);
                 return;
-            },
+            }
             Err(_) => {
                 error!("Timeout reached. No event received in the last minute.");
                 return;
@@ -80,7 +80,9 @@ async fn handle_subscription(
 }
 
 /// Initialize the subscription for the grandpa justification events.
-async fn initialize_subscription(fetcher: &RpcDataFetcher) -> Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, subxt::Error> {
+async fn initialize_subscription(
+    fetcher: &RpcDataFetcher,
+) -> Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, subxt::Error> {
     fetcher
         .client
         .rpc()
@@ -92,20 +94,24 @@ async fn initialize_subscription(fetcher: &RpcDataFetcher) -> Result<RpcSubscrip
         .await
 }
 
-/// Listen for justifications. If the subscription fails to yield a justification within the timeout,
-/// it will re-initialize the subscription.
-async fn listen_for_justifications(fetcher: RpcDataFetcher, aws_client: AWSClient) {
+/// Listen for justifications. If the subscription fails to yield a justification within the timeout
+/// or errors, it will re-initialize the subscription.
+async fn listen_for_justifications() {
     // Avail's block time is 20 seconds, as long as this is greater than that, we should be fine.
     let timeout_duration = std::time::Duration::from_secs(60);
     // Time to wait before retrying the subscription.
     let retry_delay = std::time::Duration::from_secs(5);
 
     loop {
+        info!("Initializing fetcher and subscription...");
+        let fetcher = RpcDataFetcher::new().await;
+        let aws_client = AWSClient::new().await;
+
         match initialize_subscription(&fetcher).await {
             Ok(mut sub) => {
                 debug!("Subscription initialized successfully");
                 handle_subscription(&mut sub, &aws_client, &fetcher, timeout_duration).await;
-            },
+            }
             Err(e) => {
                 debug!("Failed to initialize subscription: {:?}", e);
             }
@@ -121,8 +127,5 @@ pub async fn main() {
     dotenv::dotenv().ok();
     env_logger::init();
 
-    let fetcher = RpcDataFetcher::new().await;
-    let aws_client = AWSClient::new().await;
-
-    listen_for_justifications(fetcher, aws_client).await;
+    listen_for_justifications().await;
 }
