@@ -37,7 +37,10 @@ impl AWSClient {
             ("data".to_string(), AttributeValue::S(json_data.to_string())),
         ]);
 
-        info!("Adding justification for block number: {:?}", block_nb);
+        info!(
+            "Adding justification for chain: {} for block number: {:?}",
+            avail_chain_id, block_nb
+        );
 
         self.client
             .put_item()
