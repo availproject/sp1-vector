@@ -4,7 +4,7 @@ out = "out"
 libs = ["lib"]
 via_ir = true
 evm_version = 'cancun'
-auto_detect_remappings = false
+# auto_detect_remappings = false
 
 
 # See more config options https://github.com/foundry-rs/foundry/blob/master/crates/config/README.md#all-options
