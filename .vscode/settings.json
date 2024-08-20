@@ -30,4 +30,5 @@
         "services/Cargo.toml"
     ],
     "rust-analyzer.showUnlinkedFileNotification": false,
+    "solidity.compileUsingRemoteVersion": "v0.8.25+commit.b61c2a91",
 }
