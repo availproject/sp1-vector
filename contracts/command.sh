@@ -12,3 +12,4 @@ FlatERC1967 \
 
 # Reproduced:
 # https://etherscan.io/find-similar-contracts?a=0x02993cdC11213985b9B13224f3aF289F03bf298d&m=exact
+# forge script script/Deploy.s.sol --compiler-version 0.8.25 --via-ir --evm-version cancun --optimizer-runs 200 --private-key $PRIVATE_KEY --verify --verifier etherscan --multi --broadcast
