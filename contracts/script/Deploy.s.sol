@@ -33,40 +33,40 @@ contract DeployScript is BaseScript {
 
     function setUp() public {}
 
-    function run() external multichain(KEY) returns (address sp1VectorAddress) {
-        vm.startBroadcast();
+    function run() external multichain(KEY) broadcaster {
+        // vm.startBroadcast();
 
-        uint32 genesisHeight = uint32(vm.envUint("GENESIS_HEIGHT"));
-        bytes32 genesisHeader = vm.envBytes32("GENESIS_HEADER");
-        uint64 genesisAuthoritySetId = uint64(vm.envUint("GENESIS_AUTHORITY_SET_ID"));
-        bytes32 genesisAuthoritySetHash = vm.envBytes32("GENESIS_AUTHORITY_SET_HASH");
-        uint32 headerRangeCommitmentTreeSize = uint32(vm.envUint("HEADER_RANGE_COMMITMENT_TREE_SIZE"));
-        bytes32 vectorProgramVkey = vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY");
+        // uint32 genesisHeight = uint32(vm.envUint("GENESIS_HEIGHT"));
+        // bytes32 genesisHeader = vm.envBytes32("GENESIS_HEADER");
+        // uint64 genesisAuthoritySetId = uint64(vm.envUint("GENESIS_AUTHORITY_SET_ID"));
+        // bytes32 genesisAuthoritySetHash = vm.envBytes32("GENESIS_AUTHORITY_SET_HASH");
+        // uint32 headerRangeCommitmentTreeSize = uint32(vm.envUint("HEADER_RANGE_COMMITMENT_TREE_SIZE"));
+        // bytes32 vectorProgramVkey = vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY");
 
-        // Read trusted initialization parameters from environment.
-        address guardian = vm.envOr("GUARDIAN_ADDRESS", msg.sender);
+        // // Read trusted initialization parameters from environment.
+        // address guardian = vm.envOr("GUARDIAN_ADDRESS", msg.sender);
 
-        ISP1Verifier verifier =
-            ISP1Verifier(vm.envOr("SP1_VERIFIER_ADDRESS", 0x3B6041173B80E77f038f3F2C0f9744f04837185e));
+        // ISP1Verifier verifier =
+        //     ISP1Verifier(vm.envOr("SP1_VERIFIER_ADDRESS", 0x3B6041173B80E77f038f3F2C0f9744f04837185e));
         SP1Vector sp1VectorImpl = new SP1Vector();
         // ERC1967Proxy proxy = new ERC1967Proxy{salt: vm.envBytes32("CREATE2_SALT")}(address(sp1VectorImpl), "");
         ERC1967Proxy proxy = new ERC1967Proxy(address(sp1VectorImpl), "");
-        sp1Vector = SP1Vector(address(proxy));
-        sp1Vector.initialize(
-            SP1Vector.InitParameters({
-                guardian: guardian,
-                height: genesisHeight,
-                header: genesisHeader,
-                authoritySetId: genesisAuthoritySetId,
-                authoritySetHash: genesisAuthoritySetHash,
-                headerRangeCommitmentTreeSize: headerRangeCommitmentTreeSize,
-                vectorProgramVkey: vectorProgramVkey,
-                verifier: address(verifier)
-            })
-        );
+        // sp1Vector = SP1Vector(address(proxy));
+        // sp1Vector.initialize(
+        //     SP1Vector.InitParameters({
+        //         guardian: guardian,
+        //         height: genesisHeight,
+        //         header: genesisHeader,
+        //         authoritySetId: genesisAuthoritySetId,
+        //         authoritySetHash: genesisAuthoritySetHash,
+        //         headerRangeCommitmentTreeSize: headerRangeCommitmentTreeSize,
+        //         vectorProgramVkey: vectorProgramVkey,
+        //         verifier: address(verifier)
+        //     })
+        // );
 
-        vm.stopBroadcast();
+        // vm.stopBroadcast();
 
-        return address(sp1Vector);
+        // return address(sp1Vector);
     }
 }
