@@ -1,4 +1,4 @@
-use sp1_helper::{build_program_with_args, BuildArgs};
+use sp1_build::{build_program_with_args, BuildArgs};
 
 fn main() {
     // TODO: Re-add this once the Docker changes are merged with a new SP1 release.
