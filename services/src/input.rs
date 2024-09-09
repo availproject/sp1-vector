@@ -10,7 +10,7 @@ use std::cmp::Ordering;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
 
-use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
+use crate::types::{AvailSubscriptionGrandpaJustification, EncodedFinalityProof, FinalityProof};
 use alloy_primitives::{B256, B512};
 use avail_subxt::avail_client::AvailClient;
 use avail_subxt::config::substrate::DigestItem;
@@ -53,7 +53,10 @@ impl RpcDataFetcher {
     }
 
     /// Gets a justification from the vectorx-query service, which reads the data from the AWS DB.
-    pub async fn get_justification(&self, block_number: u32) -> Result<GrandpaJustification> {
+    pub async fn get_justification(
+        &self,
+        block_number: u32,
+    ) -> Result<AvailSubscriptionGrandpaJustification> {
         if self.vectorx_query_url.is_none() {
             return Err(anyhow::anyhow!("VECTORX_QUERY_URL must be set"));
         }
@@ -101,7 +104,7 @@ impl RpcDataFetcher {
             .as_str()
             .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
             .expect("Justification field should be a string");
-        let justification_data: GrandpaJustification =
+        let justification_data: AvailSubscriptionGrandpaJustification =
             serde_json::from_str(justification_str).expect("Couldn't deserialize!");
 
         Ok(justification_data)
@@ -334,10 +337,10 @@ impl RpcDataFetcher {
         compute_authority_set_commitment(&authorities)
     }
 
-    /// Get the justification data necessary for the circuit using GrandpaJustification and the block number.
+    /// Get the justification data necessary for the circuit using AvailSubscriptionGrandpaJustification and the block number.
     async fn compute_data_from_justification(
         &self,
-        justification: GrandpaJustification,
+        justification: AvailSubscriptionGrandpaJustification,
         block_number: u32,
     ) -> CircuitJustification {
         // Get the authority set id that attested to block_number.
@@ -378,7 +381,7 @@ impl RpcDataFetcher {
     /// Get the latest justification data. Because Avail does not store the justification data for
     /// all blocks, we can only generate a proof using the latest justification data or the justification data for a specific block.
     pub async fn get_latest_justification_data(&self) -> (CircuitJustification, Header) {
-        let sub: Result<RpcSubscription<GrandpaJustification>, _> = self
+        let sub: Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, _> = self
             .client
             .rpc()
             .subscribe(
@@ -409,12 +412,13 @@ impl RpcDataFetcher {
         panic!("No justification found")
     }
 
-    /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
+    /// Get the justification data for a block number. This operation is a bit unsafe, as the justification
+    /// is not guaranteed to match the epoch end block. Specifically, this will return the latest justification
+    /// on an epoch end block.
     pub async fn get_justification_data_for_block_unsafe(
         &self,
         epoch_end_block: u32,
-    ) -> Result<GrandpaJustification> {
-        // If epoch end block, use grandpa_proveFinality to get the justification.
+    ) -> Result<AvailSubscriptionGrandpaJustification> {
         let mut params = RpcParams::new();
         let _ = params.push(epoch_end_block);
 
@@ -427,7 +431,7 @@ impl RpcDataFetcher {
 
         let finality_proof: FinalityProof =
             Decode::decode(&mut encoded_finality_proof.0 .0.as_slice()).unwrap();
-        let justification: GrandpaJustification =
+        let justification: AvailSubscriptionGrandpaJustification =
             Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
 
         Ok(justification)
@@ -522,9 +526,9 @@ impl RpcDataFetcher {
     }
 }
 
-/// Converts GrandpaJustification and validator set to CircuitJustification.
+/// Converts AvailSubscriptionGrandpaJustification and validator set to CircuitJustification.
 pub fn convert_justification_and_valset_to_circuit(
-    justification: GrandpaJustification,
+    justification: AvailSubscriptionGrandpaJustification,
     validator_set: Vec<B256>,
     set_id: u64,
 ) -> CircuitJustification {
@@ -661,8 +665,8 @@ mod tests {
         pub votes_ancestries: Vec<DaHeader>,
     }
 
-    impl From<GrandpaJustification> for JsonGrandpaJustification {
-        fn from(value: GrandpaJustification) -> Self {
+    impl From<AvailSubscriptionGrandpaJustification> for JsonGrandpaJustification {
+        fn from(value: AvailSubscriptionGrandpaJustification) -> Self {
             Self {
                 round: value.round,
                 commit: value.commit,
@@ -671,9 +675,9 @@ mod tests {
         }
     }
 
-    impl From<JsonGrandpaJustification> for GrandpaJustification {
+    impl From<JsonGrandpaJustification> for AvailSubscriptionGrandpaJustification {
         fn from(value: JsonGrandpaJustification) -> Self {
-            GrandpaJustification {
+            AvailSubscriptionGrandpaJustification {
                 round: value.round,
                 commit: value.commit,
                 votes_ancestries: value.votes_ancestries,
@@ -702,7 +706,7 @@ mod tests {
         let validator_set_and_justification: ValidatorSetAndJustification =
             serde_json::from_reader(test_case_file).unwrap();
 
-        let justification: GrandpaJustification =
+        let justification: AvailSubscriptionGrandpaJustification =
             validator_set_and_justification.justification.into();
         let validator_set = validator_set_and_justification
             .validator_set

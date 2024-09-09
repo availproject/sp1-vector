@@ -1,45 +1,9 @@
-use avail_subxt::primitives::Header;
 use avail_subxt::RpcParams;
-use codec::Decode;
 use log::{debug, error, info};
-use serde::de::Error;
-use serde::Deserialize;
 use services::aws::AWSClient;
 use services::input::RpcDataFetcher;
-use services::types::{Commit, GrandpaJustification};
-use sp_core::bytes;
+use services::types::AvailSubscriptionGrandpaJustification;
 use subxt::backend::rpc::RpcSubscription;
-
-/// The justification type that the Avail Subxt client returns for justifications. Needs a custom
-/// deserializer, so we can't use the equivalent `GrandpaJustification` type.
-#[derive(Clone, Debug, Decode)]
-pub struct AvailSubscriptionGrandpaJustification {
-    pub round: u64,
-    pub commit: Commit,
-    #[allow(dead_code)]
-    pub votes_ancestries: Vec<Header>,
-}
-
-impl From<AvailSubscriptionGrandpaJustification> for GrandpaJustification {
-    fn from(justification: AvailSubscriptionGrandpaJustification) -> GrandpaJustification {
-        GrandpaJustification {
-            round: justification.round,
-            commit: justification.commit,
-            votes_ancestries: justification.votes_ancestries,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let encoded = bytes::deserialize(deserializer)?;
-        Self::decode(&mut &encoded[..])
-            .map_err(|codec_err| D::Error::custom(format!("Invalid decoding: {:?}", codec_err)))
-    }
-}
 
 /// When the subscription yields events, add them to the indexer DB. If the subscription fails,
 /// exit so the outer loop can re-initialize it.
@@ -57,7 +21,7 @@ async fn handle_subscription(
                     justification.commit.target_number
                 );
                 if let Err(e) = aws_client
-                    .add_justification(&fetcher.avail_chain_id, justification.into())
+                    .add_justification(&fetcher.avail_chain_id, justification)
                     .await
                 {
                     error!("Error adding justification to AWS: {:?}", e);
