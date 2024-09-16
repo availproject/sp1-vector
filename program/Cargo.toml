@@ -6,4 +6,4 @@ edition = "2021"
 [dependencies]
 sp1-vector-primitives.workspace = true
 alloy-sol-types.workspace = true
-sp1-zkvm = "1.2.0"
+sp1-zkvm = "2.0.0"
