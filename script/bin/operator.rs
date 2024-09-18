@@ -555,13 +555,18 @@ impl VectorXOperator {
 
     async fn run(&self) -> Result<()> {
         loop {
+            info!("Starting loop!");
             let loop_interval_mins = get_loop_interval_mins();
             let block_interval = get_block_update_interval();
 
             // Check if there is a rotate available for the next authority set.
-            let current_authority_set_id = self.find_rotate().await?;
+            // Note: There is a timeout here in case the Avail RPC fails to respond. Once there is
+            // an easy way to configure the timeout on Avail RPC requests, this should be removed.
+            let current_authority_set_id =
+                tokio::time::timeout(tokio::time::Duration::from_secs(60), self.find_rotate())
+                    .await??;
 
-            println!(
+            info!(
                 "Current authority set id: {}",
                 current_authority_set_id.unwrap_or(0)
             );
@@ -577,12 +582,18 @@ impl VectorXOperator {
                 );
             }
 
-            println!("On the way for header range!");
+            info!("On the way for header range!");
 
             // Check if there is a header range request available.
-            let header_range_request = self.find_header_range(block_interval).await?;
+            // Note: There is a timeout here in case the Avail RPC fails to respond. Once there is
+            // an easy way to configure the timeout on Avail RPC requests, this should be removed.
+            let header_range_request = tokio::time::timeout(
+                tokio::time::Duration::from_secs(60),
+                self.find_header_range(block_interval),
+            )
+            .await??;
 
-            println!("header_range_request: {:?}", header_range_request);
+            info!("header_range_request: {:?}", header_range_request);
 
             if let Some(header_range_request) = header_range_request {
                 // Request the header range proof to block_to_step_to.
