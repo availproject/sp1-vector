@@ -108,7 +108,7 @@ async fn send_kms_relay_request(args: &KMSRelayRequest) -> Result<KMSRelayRespon
         .post(format!("{}/relay", relayer_endpoint))
         .bearer_auth(api_key)
         .json(&json!(args))
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(90))
         .send()
         .await?;
     let response_body = response.text().await?;
