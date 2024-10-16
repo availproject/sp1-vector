@@ -79,31 +79,15 @@ services:
     startCommand: cargo run --bin operator --release
     autoDeploy: true
     envVars:
-      - key: AVAIL_URL
-        value: wss://turing-rpc.avail.so/ws
-      - key: AVAIL_CHAIN_ID
-        value: turing
-      - key: SP1_PROVER
-        value: network
-      - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
-      - key: VECTORX_QUERY_URL
-        value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
         value: 11155111
       - key: CONTRACT_ADDRESS
         value: 0xe542db219a7e2b29c7aeaeace242c9a2cd528f96
       - key: RUST_LOG
         value: info
-      - key: BLOCK_UPDATE_INTERVAL
-        value: 300
-      - key: LOOP_INTERVAL_MINS
-        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
-        sync: false
-      - key: SP1_PRIVATE_KEY
         sync: false
   - type: worker
     runtime: rust
@@ -116,31 +100,15 @@ services:
     startCommand: cargo run --bin operator --release
     autoDeploy: true
     envVars:
-      - key: AVAIL_URL
-        value: wss://turing-rpc.avail.so/ws
-      - key: AVAIL_CHAIN_ID
-        value: turing
-      - key: SP1_PROVER
-        value: network
-      - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
-      - key: VECTORX_QUERY_URL
-        value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
         value: 421614
       - key: CONTRACT_ADDRESS
         value: 0xA712dfec48AF3a78419A8FF90fE8f97Ae74680F0
       - key: RUST_LOG
         value: info
-      - key: BLOCK_UPDATE_INTERVAL
-        value: 300
-      - key: LOOP_INTERVAL_MINS
-        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
-        sync: false
-      - key: SP1_PRIVATE_KEY
         sync: false
   - type: worker
     runtime: rust
@@ -153,31 +121,36 @@ services:
     startCommand: cargo run --bin operator --release
     autoDeploy: true
     envVars:
-      - key: AVAIL_URL
-        value: wss://turing-rpc.avail.so/ws
-      - key: AVAIL_CHAIN_ID
-        value: turing
-      - key: SP1_PROVER
-        value: network
-      - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
-      - key: VECTORX_QUERY_URL
-        value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
         value: 84532
       - key: CONTRACT_ADDRESS
         value: 0x13cBE46E168460a101c07efb6Ab7B9ec637F02aA
       - key: RUST_LOG
         value: info
-      - key: BLOCK_UPDATE_INTERVAL
-        value: 300
-      - key: LOOP_INTERVAL_MINS
-        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
         sync: false
-      - key: SP1_PRIVATE_KEY
+  - type: worker
+    runtime: rust
+    name: sp1vector-turing:holesky
+    repo: https://github.com/succinctlabs/sp1-vector
+    region: oregon
+    plan: standard
+    rootDir: script
+    buildCommand: rm -rf build.rs && cargo build --bin operator --release
+    startCommand: cargo run --bin operator --release
+    autoDeploy: true
+    envVars:
+      - key: CHAIN_ID
+        value: 17000
+      - key: CONTRACT_ADDRESS
+        value: 0x7ae6f8B9556b5501cC8608c5c0054903C0070269
+      - key: RUST_LOG
+        value: info
+      - key: PRIVATE_KEY
+        sync: false
+      - key: RPC_URL
         sync: false
   - type: worker
     runtime: rust
@@ -190,31 +163,15 @@ services:
     startCommand: cargo run --bin operator --release
     autoDeploy: true
     envVars:
-      - key: AVAIL_URL
-        value: wss://zenitsu-rpc.slowops.xyz/ws
-      - key: AVAIL_CHAIN_ID
-        value: mainnet
-      - key: SP1_PROVER
-        value: network
-      - key: PROVER_NETWORK_RPC
-        value: https://3ct2s5q54ed4xg3vcxfu3zrumy0hacjs.lambda-url.us-east-2.on.aws
-      - key: VECTORX_QUERY_URL
-        value: https://vectorx-query.succinct.xyz
       - key: CHAIN_ID
         value: 1
       - key: CONTRACT_ADDRESS
         value: 0x02993cdC11213985b9B13224f3aF289F03bf298d
       - key: RUST_LOG
         value: info
-      - key: BLOCK_UPDATE_INTERVAL
-        value: 300
-      - key: LOOP_INTERVAL_MINS
-        value: 10
       - key: PRIVATE_KEY
         sync: false
       - key: RPC_URL
-        sync: false
-      - key: SP1_PRIVATE_KEY
         sync: false
   - type: worker
     runtime: rust
