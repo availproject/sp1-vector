@@ -1,4 +1,2 @@
 @sp1-contracts/=lib/sp1-contracts/contracts/src/
 @succinctx/=lib/succinctx/contracts/src
-@openzeppelin/=lib/succinctx/contracts/lib/openzeppelin-contracts/
-@openzeppelin-upgradeable/=lib/succinctx/contracts/lib/openzeppelin-contracts-upgradeable/
