@@ -145,7 +145,7 @@ services:
       - key: CHAIN_ID
         value: 17000
       - key: CONTRACT_ADDRESS
-        value: 0x7ae6f8B9556b5501cC8608c5c0054903C0070269
+        value: 0x8a48b5184dEc29E7276BF74d1C1d30d032F31e19
       - key: RUST_LOG
         value: info
       - key: PRIVATE_KEY
