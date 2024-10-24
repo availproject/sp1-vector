@@ -1,0 +1,410 @@
+<!DOCTYPE HTML>
+<html lang="en" class="light" dir="ltr">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>SP1 Vector Documentation</title>
+        <meta name="robots" content="noindex">
+
+
+        <!-- Custom HTML head -->
+        
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff">
+
+        <link rel="icon" href="favicon.svg">
+        <link rel="shortcut icon" href="favicon.png">
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="fonts/fonts.css">
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+
+    </head>
+    <body class="sidebar-visible no-js">
+    <div id="body-container">
+        <!-- Provide site root to javascript -->
+        <script>
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script>
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script>
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('light')
+            html.classList.add(theme);
+            var body = document.querySelector('body');
+            body.classList.remove('no-js')
+            body.classList.add('js');
+        </script>
+
+        <input type="checkbox" id="sidebar-toggle-anchor" class="hidden">
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script>
+            var body = document.querySelector('body');
+            var sidebar = null;
+            var sidebar_toggle = document.getElementById("sidebar-toggle-anchor");
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            } else {
+                sidebar = 'hidden';
+            }
+            sidebar_toggle.checked = sidebar === 'visible';
+            body.classList.remove('sidebar-visible');
+            body.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="introduction.html"><strong aria-hidden="true">1.</strong> Introduction</a></li><li class="chapter-item expanded "><a href="components.html"><strong aria-hidden="true">2.</strong> Components</a></li><li class="chapter-item expanded "><a href="deployment.html"><strong aria-hidden="true">3.</strong> Deployment</a></li><li class="chapter-item expanded "><a href="query-data-root-proofs.html"><strong aria-hidden="true">4.</strong> Query Data Root Proofs</a></li><li class="chapter-item expanded "><a href="deployed-contracts.html"><strong aria-hidden="true">5.</strong> Deployed Contracts</a></li><li class="chapter-item expanded "><a href="reproducible-builds.html"><strong aria-hidden="true">6.</strong> Reproducible Builds</a></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle">
+                <div class="sidebar-resize-indicator"></div>
+            </div>
+        </nav>
+
+        <!-- Track and set sidebar scroll position -->
+        <script>
+            var sidebarScrollbox = document.querySelector('#sidebar .sidebar-scrollbox');
+            sidebarScrollbox.addEventListener('click', function(e) {
+                if (e.target.tagName === 'A') {
+                    sessionStorage.setItem('sidebar-scroll', sidebarScrollbox.scrollTop);
+                }
+            }, { passive: true });
+            var sidebarScrollTop = sessionStorage.getItem('sidebar-scroll');
+            sessionStorage.removeItem('sidebar-scroll');
+            if (sidebarScrollTop) {
+                // preserve sidebar scroll position when navigating via links within sidebar
+                sidebarScrollbox.scrollTop = sidebarScrollTop;
+            } else {
+                // scroll sidebar to current active section when navigating via "next/previous chapter" buttons
+                var activeSection = document.querySelector('#sidebar .active');
+                if (activeSection) {
+                    activeSection.scrollIntoView({ block: 'center' });
+                }
+            }
+        </script>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky">
+                    <div class="left-buttons">
+                        <label id="sidebar-toggle" class="icon-button" for="sidebar-toggle-anchor" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </label>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                    </div>
+
+                    <h1 class="menu-title">SP1 Vector Documentation</h1>
+
+                    <div class="right-buttons">
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        <a href="https://github.com/yourusername/sp1-vector" title="Git repository" aria-label="Git repository">
+                            <i id="git-repository-button" class="fa fa-github"></i>
+                        </a>
+
+                    </div>
+                </div>
+
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script>
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 id="sp1-vector"><a class="header" href="#sp1-vector">SP1 Vector</a></h1>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
+<p>Implementation of zero-knowledge proof circuits for <a href="https://blog.availproject.org/data-attestation-bridge/">Vector</a>, Avail's Data Attestation Bridge in SP1.</p>
+<ul>
+<li><code>/program</code>: The SP1 Vector program.</li>
+<li><code>/primitives</code>: Libraries for types and helper functions used in the program.</li>
+<li><code>/script</code>: Scripts for getting the contract's genesis parameters and deploying the operator to
+update the light client.</li>
+<li><code>/services</code>: RPC fetcher for the <code>script</code> + the justification indexer.</li>
+<li><code>/contracts</code>: The contract's source code and deployment scripts.</li>
+<li><code>/query</code>: Contains the logic for querying data root proofs from the contracts. Automatically deploys to https://vectorx-query.succinct.xyz.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="components"><a class="header" href="#components">Components</a></h1>
+<p>An SP1 Vector implementation has a few key components:</p>
+<ul>
+<li>An <code>SP1Vector</code> contract. Contains the logic for verifying SP1 Vector proofs, storing the
+latest data from the Avail chain, including the headers and data commitments. Matches the interface
+of the existing <a href="https://github.com/succinctlabs/vectorx/blob/main/contracts/src/VectorX.sol">VectorX</a> contract so it can be upgraded in-place.</li>
+<li>An <code>SP1Verifier</code> contract. Verifies arbitrary SP1 programs. Most chains will have canonical deployments
+upon SP1's mainnet launch. Until then, users can deploy their own <code>SP1Verifier</code> contracts to verify
+SP1 programs on their chain. The SP1 Vector implementation will use the <code>SP1Verifier</code> contract to verify
+the proofs of the SP1 Vector programs.</li>
+<li>The SP1 Vector program. An SP1 program that verifies the transition between two Avail
+headers and computes the data commitment of the intermediate blocks.</li>
+<li>The operator. A Rust script that fetches the latest data from a deployed <code>SP1Vector</code> contract and an Avail chain, determines the block to request, requests for/generates a proof, and relays the proof to
+the <code>SP1Vector</code> contract.</li>
+</ul>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="deployment"><a class="header" href="#deployment">Deployment</a></h1>
+<h2 id="overview-1"><a class="header" href="#overview-1">Overview</a></h2>
+<p>Here's how to deploy an SP1 Vector contract for an Avail chain.</p>
+<h2 id="steps"><a class="header" href="#steps">Steps</a></h2>
+<ol>
+<li>
+<p>To deploy an SP1 Vector contract for an Avail chain do the following.</p>
+<p>Get the genesis parameters for the <code>SP1Vector</code> contract.</p>
+<pre><code class="language-shell">cd script
+
+# Example with Avail Turing Testnet.
+AVAIL_URL=wss://turing-rpc.avail.so/ws cargo run --bin genesis --release
+</code></pre>
+</li>
+<li>
+<p>Add the genesis parameters to <code>/contracts/.env</code> mirroring <code>contracts/.env.example</code>.</p>
+<div class="table-wrapper"><table><thead><tr><th>Parameter</th><th>Description</th></tr></thead><tbody>
+<tr><td>GENESIS_HEIGHT</td><td>The block height of the genesis block for the Avail chain</td></tr>
+<tr><td>GENESIS_HEADER</td><td>The header of the genesis block for the Avail chain</td></tr>
+<tr><td>GENESIS_AUTHORITY_SET_ID</td><td>The ID of the initial authority set for the Avail chain</td></tr>
+<tr><td>GENESIS_AUTHORITY_SET_HASH</td><td>The hash of the initial authority set for the Avail chain</td></tr>
+<tr><td>SP1_VECTOR_PROGRAM_VKEY</td><td>The verification key for the SP1 Vector program</td></tr>
+<tr><td>HEADER_RANGE_COMMITMENT_TREE_SIZE</td><td>The size of the Merkle tree used for header range commitments (Default 1024)</td></tr>
+</tbody></table>
+</div></li>
+<li>
+<p>Deploy the <code>SP1Vector</code> contract with genesis parameters.</p>
+<pre><code class="language-shell">cd ../contracts
+
+forge install
+
+SP1_PROVER={mock, network} CHAINS=sepolia forge script script/Deploy.s.sol --private-key $PRIVATE_KEY --multi --broadcast --verify
+</code></pre>
+<p>If you see the following error, add <code>--legacy</code> to the command.</p>
+<pre><code class="language-shell">Error: Failed to get EIP-1559 fees    
+</code></pre>
+</li>
+<li>
+<p>Your deployed contract address will be printed to the terminal.</p>
+<pre><code class="language-shell">== Return ==
+0: address &lt;SP1_VECTOR_ADDRESS&gt;
+</code></pre>
+<p>This will be used when you run the operator in step 5.</p>
+</li>
+<li>
+<p>Export your SP1 Prover Network configuration</p>
+<pre><code class="language-shell"># Export the PRIVATE_KEY you will use to relay proofs.
+export PRIVATE_KEY=&lt;PRIVATE_KEY&gt;
+
+# Optional
+# If you're using the Succinct network, set SP1_PROVER to "network". Otherwise, set it to "local" or "mock".
+export SP1_PROVER={network|local|mock}
+# Only required if SP1_PROVER is set "network".
+export SP1_PRIVATE_KEY=&lt;SP1_PRIVATE_KEY&gt;
+</code></pre>
+</li>
+<li>
+<p>Run the SP1 Vector operator to update the LC continuously.</p>
+<pre><code>cd ../script
+
+AVAIL_URL=wss://turing-rpc.avail.so/ws AVAIL_CHAIN_ID=turing CHAIN_ID=11155111 RPC_URL=https://ethereum-sepolia.publicnode.com/ CONTRACT_ADDRESS=&lt;SP1_VECTOR_ADDRESS&gt; VECTORX_QUERY_URL=https://vectorx-query.succinct.xyz
+cargo run --bin operator --release
+</code></pre>
+</li>
+</ol>
+<h2 id="demo-contract"><a class="header" href="#demo-contract">Demo Contract</a></h2>
+<p>An example contract using SP1 Vector can be found on Sepolia <a href="https://sepolia.etherscan.io/address/0x04819f50EE813a8f6F6ba28288551c4339fDC881">here</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="query-data-root-proofs"><a class="header" href="#query-data-root-proofs">Query Data Root Proofs</a></h1>
+<h2 id="overview-2"><a class="header" href="#overview-2">Overview</a></h2>
+<p>Whenever a new data root commitment is stored on-chain, the merkle proofs need to be made available for end-users to prove the data root's of blocks within those data commitments. This service listens for data root commitment events on-chain and stores the merkle proofs for each data root in the range, which is then exposed via a separate endpoint.</p>
+<p>The indexed contracts are configured in <a href="https://github.com/succinctlabs/sp1-vector/tree/main/query/app/utils/deployments.json">deployments.json</a>.</p>
+<h2 id="rpc-queries"><a class="header" href="#rpc-queries">RPC Queries</a></h2>
+<h3 id="query-for-dataroot-proof-data"><a class="header" href="#query-for-dataroot-proof-data">Query for <code>dataRoot</code> Proof Data</a></h3>
+<p>Querying with a block number.</p>
+<pre><code>https://vectorx-query.succinct.xyz/api?chainName=hex&amp;contractChainId=11155111&amp;contractAddress=0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75&amp;blockNumber=247230
+</code></pre>
+<p>Example response:</p>
+<pre><code class="language-json">{
+  "data": {
+    "blockNumber": 247230,
+    "rangeHash": "0xafad54e98bdaebacc1f220dd919dda48b84ed0689906c288a4d93dae1ae9d7c5",
+    ...
+  }
+}
+</code></pre>
+<p>Querying with a block hash.</p>
+<pre><code>https://vectorx-query.succinct.xyz/api?chainName=hex&amp;contractChainId=11155111&amp;contractAddress=0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75&amp;blockHash=0xad664ed32323c70e9c19333f6d7d6f855719f439bc0cb4cd92d89138c252d560
+</code></pre>
+<p>Example response:</p>
+<pre><code class="language-json">{
+  "data": {
+    "rangeHash": "0xafad54e98bdaebacc1f220dd919dda48b84ed0689906c288a4d93dae1ae9d7c5",
+    "dataCommitment": "0x7b0f5743191b390b3ba21cdda41b3940b37566a9f336b9e37cf0ad94c937242a",
+    ...
+  }
+}
+</code></pre>
+<h3 id="health-of-the-vectorx-contract"><a class="header" href="#health-of-the-vectorx-contract">Health of the <code>VectorX</code> contract</a></h3>
+<p>Querying for the health of the VectorX contract deployed on Sepolia (chain ID: 11155111) at address 0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75.</p>
+<pre><code>https://vectorx-query.succinct.xyz/api/health?chainName=hex&amp;contractChainId=11155111&amp;contractAddress=0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75
+</code></pre>
+<p>Example response:</p>
+<pre><code class="language-json">{"data":{"logEmitted":true,"ethBlocksSinceLastLog":35,"lastLogTimestamp":1717707768,"blocksBehindHead":50}}
+</code></pre>
+<p>Note: If <code>logEmitted</code> is false, the contract has not emitted a log in at least the last <code>ethBlocksSinceLastLog</code> blocks.</p>
+<h3 id="range-of-the-vectorx-contract"><a class="header" href="#range-of-the-vectorx-contract">Range of the <code>VectorX</code> contract</a></h3>
+<p>Querying for the range of the VectorX contract deployed on Sepolia (chain ID: 11155111) at address 0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75.</p>
+<pre><code>https://vectorx-query.succinct.xyz/api/range?contractChainId=11155111&amp;contractAddress=0xbc281367e1F2dB1c3e92255AA2F040B1c642ec75
+</code></pre>
+<p>Example response:</p>
+<pre><code class="language-json">{"data":{"start":63091,"end":304710}}
+</code></pre>
+<h2 id="launch-the-query-service"><a class="header" href="#launch-the-query-service">Launch the Query Service</a></h2>
+<p>Update <code>query/.env</code> with the corresponding variables from <a href="https://github.com/succinctlabs/sp1-vector/tree/main/query/.env.example">.env.example</a>. Then launch the service with:</p>
+<pre><code>npm run dev
+</code></pre>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="deployed-contracts"><a class="header" href="#deployed-contracts">Deployed Contracts</a></h1>
+<p>You can find a list of actively deployed contracts in this <a href="/query/app/utils/deployments.json">deployments.json</a>.</p>
+<div style="break-before: page; page-break-before: always;"></div><h1 id="reproducible-builds"><a class="header" href="#reproducible-builds">Reproducible Builds</a></h1>
+<h2 id="overview-3"><a class="header" href="#overview-3">Overview</a></h2>
+<p>When deploying SP1 Vector in production, it's important to ensure that the program used when generating proofs is reproducible.</p>
+<h2 id="prerequisites"><a class="header" href="#prerequisites">Prerequisites</a></h2>
+<p>You first need to install the <a href="https://docs.succinct.xyz/getting-started/install.html#option-1-prebuilt-binaries-recommended">cargo prove</a> toolchain.</p>
+<p>Ensure that you have the latest version of the toolchain by running:</p>
+<pre><code class="language-bash">sp1up
+</code></pre>
+<p>Confirm that you have the toolchain installed by running:</p>
+<pre><code class="language-bash">cargo prove --version
+</code></pre>
+<h2 id="verify-the-sp1-vector-binary"><a class="header" href="#verify-the-sp1-vector-binary">Verify the SP1 Vector binary</a></h2>
+<p>To build the SP1 Vector binary, first ensure that Docker is running.</p>
+<pre><code class="language-bash">docker ps
+</code></pre>
+<p>Then build the binaries:</p>
+<pre><code class="language-bash">cd program
+
+# Builds the SP1 Vector binary using the corresponding Docker tag, output directory and ELF name.
+cargo prove build --docker --tag v3.0.0 --output-directory ../script --elf-name sp1-vector-docker
+</code></pre>
+<p>Now, verify the binaries by confirming the output of <code>vkey</code> matches the vkeys on the contract. The <code>vkey</code> program outputs the verification key
+based on the ELF in <code>/elf</code>.</p>
+<pre><code class="language-bash">cargo run --bin vkey --release
+</code></pre>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+
+            </nav>
+
+        </div>
+
+        <!-- Livereload script (if served using the cli tool) -->
+        <script>
+            const wsProtocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsAddress = wsProtocol + "//" + location.host + "/" + "__livereload";
+            const socket = new WebSocket(wsAddress);
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+
+
+
+        <script>
+            window.playground_copyable = true;
+        </script>
+
+
+        <script src="elasticlunr.min.js"></script>
+        <script src="mark.min.js"></script>
+        <script src="searcher.js"></script>
+
+        <script src="clipboard.min.js"></script>
+        <script src="highlight.js"></script>
+        <script src="book.js"></script>
+
+        <!-- Custom JS scripts -->
+
+        <script>
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+
+    </div>
+    </body>
+</html>

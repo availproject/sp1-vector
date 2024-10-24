@@ -1,8 +1,10 @@
-# Query Service
+# Query Data Root Proofs
+
+## Overview
 
 Whenever a new data root commitment is stored on-chain, the merkle proofs need to be made available for end-users to prove the data root's of blocks within those data commitments. This service listens for data root commitment events on-chain and stores the merkle proofs for each data root in the range, which is then exposed via a separate endpoint.
 
-The indexed contracts are configured in [deployments.json](./query/app/utils/deployments.json).
+The indexed contracts are configured in [deployments.json](https://github.com/succinctlabs/sp1-vector/tree/main/query/app/utils/deployments.json).
 
 ## RPC Queries
 
@@ -76,7 +78,7 @@ Example response:
 
 ## Launch the Query Service
 
-Update [query/.env](./query/.env) with the corresponding variables from [.env.example](./.env.example). Then launch the service with:
+Update `query/.env` with the corresponding variables from [.env.example](https://github.com/succinctlabs/sp1-vector/tree/main/query/.env.example). Then launch the service with:
 
 ```
 npm run dev
