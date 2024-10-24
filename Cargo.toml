@@ -24,8 +24,8 @@ blake2 = "0.10.6"
 itertools = "0.10.5"
 alloy = { version = "0.1.1", features = ["full"] }
 
-sp1-sdk = "2.0.0"
-sp1-build = "2.0.0"
+sp1-sdk = "3.0.0"
+sp1-build = "3.0.0"
 
 reqwest = { version = "0.11.20", features = ["json"] }
 futures = "0.3.30"
