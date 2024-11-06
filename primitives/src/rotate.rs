@@ -62,7 +62,7 @@ fn verify_encoding_epoch_end_header(
         decode_scale_compact_int(header_bytes[cursor..cursor + 5].to_vec());
     cursor += decoded_byte_length;
 
-    // Verify the next byte after encoded scheduled change message is scheduled change enum flags.
+    // Verify the next byte after encoded scheduled change message is the ScheduledChange enum flag.
     assert_eq!(header_bytes[cursor], 1u8);
 
     cursor += 1;

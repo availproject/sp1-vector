@@ -16,11 +16,11 @@ async fn main() -> anyhow::Result<()> {
     setup_logger();
 
     // Supply an initial authority set id, trusted block, and target block.
-    let authority_set_id = 64u64;
+    let authority_set_id = 282u64;
     let trusted_block = 305130;
     let target_block = 305160;
 
-    let proof_type = ProofType::HeaderRangeProof;
+    let proof_type = ProofType::RotateProof;
 
     let fetcher = RpcDataFetcher::new().await;
     let mut stdin: SP1Stdin = SP1Stdin::new();

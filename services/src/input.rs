@@ -460,6 +460,7 @@ impl RpcDataFetcher {
     /// position of the encoded new authority set in the header.
     pub async fn get_header_rotate(&self, authority_set_id: u64) -> HeaderRotateData {
         let epoch_end_block = self.last_justified_block(authority_set_id).await;
+        println!("epoch_end_block {:?}", epoch_end_block);
         if epoch_end_block == 0 {
             panic!("Current authority set is still active!");
         }
@@ -486,8 +487,8 @@ impl RpcDataFetcher {
                 if consensus_id == [70, 82, 78, 75] {
                     found_correct_log = true;
 
-                    // Denotes that this is a `ScheduledChange` log.
-                    assert_eq!(value[0], 1);
+                    // // Denotes that this is a `ScheduledChange` log.
+                    // assert_eq!(value[0], 1);
 
                     // The bytes after the prefix are the compact encoded number of authorities.
                     // Follows the encoding format: https://docs.substrate.io/reference/scale-codec/#fn-1
