@@ -538,11 +538,11 @@ impl RpcDataFetcher {
                             println!("Found ForcedChange log!");
                             found_correct_log = true;
                         }
-                        _ => continue,
+                        _ => {
+                            position += encoded_log.len();
+                            continue;
+                        }
                     }
-
-                    // // Denotes that this is a `ScheduledChange` log.
-                    // assert_eq!(value[0], 1);
 
                     // The bytes after the prefix are the compact encoded number of authorities.
                     // Follows the encoding format: https://docs.substrate.io/reference/scale-codec/#fn-1
