@@ -1,4 +1,6 @@
 use anyhow::Result;
+use avail_subxt::primitives::grandpa::{AuthorityId, ConsensusLog};
+use log::info;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
@@ -165,6 +167,15 @@ impl RpcDataFetcher {
         let justification = self
             .get_justification_data_epoch_end_block(authority_set_id)
             .await;
+
+        let auth_set_changes = self.filter_auth_set_changes(authority_set_id).await;
+        // println!("auth_set_changes {:?}", auth_set_changes.len());
+
+        for auth_set_change in auth_set_changes {
+            for (pubkey, weight) in auth_set_change {
+                // println!("pubkey {:?} weight {:?}", pubkey.0 .0 .0, weight);
+            }
+        }
 
         let header_rotate_data = self.get_header_rotate(authority_set_id).await;
 
@@ -454,6 +465,38 @@ impl RpcDataFetcher {
             .await
     }
 
+    pub async fn filter_auth_set_changes(
+        &self,
+        authority_set_id: u64,
+    ) -> Vec<Vec<(AuthorityId, u64)>> {
+        let epoch_end_block = self.last_justified_block(authority_set_id).await;
+        println!("epoch_end_block {:?}", epoch_end_block);
+        if epoch_end_block == 0 {
+            panic!("Current authority set is still active!");
+        }
+
+        let header = self.get_header(epoch_end_block).await;
+
+        let new_auths = header
+            .digest
+            .logs
+            .iter()
+            .filter_map(|e| match &e {
+                // UGHHH, why won't the b"FRNK" just work
+                avail_subxt::config::substrate::DigestItem::Consensus(
+                    [b'F', b'R', b'N', b'K'],
+                    data,
+                ) => match ConsensusLog::<u32>::decode(&mut data.as_slice()) {
+                    Ok(ConsensusLog::ScheduledChange(x)) => Some(x.next_authorities),
+                    Ok(ConsensusLog::ForcedChange(_, x)) => Some(x.next_authorities),
+                    _ => None,
+                },
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        new_auths
+    }
+
     /// This function takes in a block_number as input, and fetches the new authority set specified
     /// in the epoch end block. It returns the data necessary to prove the new authority set, which
     /// specifies the new authority set hash, the number of authorities, and the start and end
@@ -485,7 +528,18 @@ impl RpcDataFetcher {
             // Note: Two bytes are skipped between the consensus id and value.
             if let DigestItem::Consensus(consensus_id, value) = log {
                 if consensus_id == [70, 82, 78, 75] {
-                    found_correct_log = true;
+                    // Decode the consensus log. Only if this is the correct log, will we continue.
+                    match ConsensusLog::<u32>::decode(&mut value.as_slice()) {
+                        Ok(ConsensusLog::ScheduledChange(x)) => {
+                            println!("Found ScheduledChange log!");
+                            found_correct_log = true;
+                        }
+                        Ok(ConsensusLog::ForcedChange(_, x)) => {
+                            println!("Found ForcedChange log!");
+                            found_correct_log = true;
+                        }
+                        _ => continue,
+                    }
 
                     // // Denotes that this is a `ScheduledChange` log.
                     // assert_eq!(value[0], 1);
