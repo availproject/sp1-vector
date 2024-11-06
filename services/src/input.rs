@@ -168,15 +168,6 @@ impl RpcDataFetcher {
             .get_justification_data_epoch_end_block(authority_set_id)
             .await;
 
-        let auth_set_changes = self.filter_auth_set_changes(authority_set_id).await;
-        // println!("auth_set_changes {:?}", auth_set_changes.len());
-
-        for auth_set_change in auth_set_changes {
-            for (pubkey, weight) in auth_set_change {
-                // println!("pubkey {:?} weight {:?}", pubkey.0 .0 .0, weight);
-            }
-        }
-
         let header_rotate_data = self.get_header_rotate(authority_set_id).await;
 
         RotateInputs {
@@ -465,12 +456,14 @@ impl RpcDataFetcher {
             .await
     }
 
+    /// Filter the authority set changes from the header at the end of the epoch associated with the
+    /// given authority set id.
+    /// Source: https://github.com/Rahul8869/avail-light/blob/1ee54e10c037474d2ee99a0762e6ffee43f0df1c/src/utils.rs#L78
     pub async fn filter_auth_set_changes(
         &self,
         authority_set_id: u64,
     ) -> Vec<Vec<(AuthorityId, u64)>> {
         let epoch_end_block = self.last_justified_block(authority_set_id).await;
-        println!("epoch_end_block {:?}", epoch_end_block);
         if epoch_end_block == 0 {
             panic!("Current authority set is still active!");
         }
@@ -482,7 +475,6 @@ impl RpcDataFetcher {
             .logs
             .iter()
             .filter_map(|e| match &e {
-                // UGHHH, why won't the b"FRNK" just work
                 avail_subxt::config::substrate::DigestItem::Consensus(
                     [b'F', b'R', b'N', b'K'],
                     data,
@@ -503,7 +495,6 @@ impl RpcDataFetcher {
     /// position of the encoded new authority set in the header.
     pub async fn get_header_rotate(&self, authority_set_id: u64) -> HeaderRotateData {
         let epoch_end_block = self.last_justified_block(authority_set_id).await;
-        println!("epoch_end_block {:?}", epoch_end_block);
         if epoch_end_block == 0 {
             panic!("Current authority set is still active!");
         }
