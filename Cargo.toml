@@ -22,7 +22,9 @@ alloy-primitives = { version = "0.7.5", features = ["serde"] }
 alloy-sol-types = "0.7.5"
 blake2 = "0.10.6"
 itertools = "0.10.5"
-alloy = { version = "0.1.1", features = ["full"] }
+alloy = { version = "0.8.0", features = ["full"] }
+chrono = "0.4.39"
+
 
 sp1-sdk = "3.0.0"
 sp1-build = "3.0.0"
