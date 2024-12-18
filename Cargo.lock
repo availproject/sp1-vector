@@ -7983,7 +7983,7 @@ dependencies = [
 name = "services"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.7.7",
+ "alloy-primitives 0.8.15",
  "anyhow",
  "avail-subxt",
  "aws-config",
@@ -9312,8 +9312,8 @@ dependencies = [
 name = "sp1-vector-primitives"
 version = "0.1.0"
 dependencies = [
- "alloy-primitives 0.7.7",
- "alloy-sol-types 0.7.7",
+ "alloy-primitives 0.8.15",
+ "alloy-sol-types 0.8.15",
  "avail-subxt",
  "blake2",
  "ed25519-consensus",
@@ -9328,7 +9328,7 @@ dependencies = [
 name = "sp1-vectorx-program"
 version = "0.1.0"
 dependencies = [
- "alloy-sol-types 0.7.7",
+ "alloy-sol-types 0.8.15",
  "sp1-vector-primitives",
  "sp1-zkvm",
 ]
