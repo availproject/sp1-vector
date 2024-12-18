@@ -29,3 +29,5 @@ pgo-data.profdata
 .idea
 
 /etc/secrets
+
+**/filtered_transactions/**
