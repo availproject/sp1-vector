@@ -201,7 +201,7 @@ async fn main() -> Result<()> {
     let total = eth_total;
 
     println!(
-        "\n{} paid the following in SP1 Blobstream relaying fees in {}/{}:\n  Ethereum: {:.4} ETH\n  Total: {:.4} ETH",
+        "\n{} paid the following in SP1 Vector relaying fees in {}/{}:\n  Ethereum: {:.4} ETH\n  Total: {:.4} ETH",
         args.from_address, args.month, args.year, eth_total, total
     );
 
