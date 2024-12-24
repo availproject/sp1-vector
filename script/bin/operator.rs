@@ -1,24 +1,22 @@
+use std::cmp::min;
 use std::env;
 use std::time::Duration;
-use std::{cmp::min, sync::Arc};
 
 use alloy::{
-    network::{Ethereum, EthereumWallet},
+    network::EthereumWallet,
     primitives::{Address, B256},
-    providers::{
-        fillers::{ChainIdFiller, FillProvider, GasFiller, JoinFill, WalletFiller},
-        Identity, Provider, ProviderBuilder, RootProvider,
-    },
+    providers::ProviderBuilder,
     signers::local::PrivateKeySigner,
     sol,
-    transports::http::{Client, Http},
 };
+use reqwest::Url;
 
 use anyhow::Result;
 use log::{error, info};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    SP1VerifyingKey,
 };
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
@@ -26,6 +24,10 @@ use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 // If the SP1 proof takes too long to respond, time out.
 const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
+
+// Wait for 3 required confirmations with a timeout of 60 seconds.
+const NUM_CONFIRMATIONS: u64 = 3;
+const RELAY_TIMEOUT_SECONDS: u64 = 60;
 
 sol! {
     #[allow(missing_docs)]
@@ -43,24 +45,11 @@ sol! {
         function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external;
     }
 }
-
-/// Alias the fill provider for the Ethereum network. Retrieved from the instantiation
-/// of the ProviderBuilder. Recommended method for passing around a ProviderBuilder.
-type EthereumFillProvider = FillProvider<
-    JoinFill<JoinFill<JoinFill<Identity, GasFiller>, ChainIdFiller>, WalletFiller<EthereumWallet>>,
-    RootProvider<Http<Client>>,
-    Http<Client>,
-    Ethereum,
->;
-
 struct VectorXOperator {
-    wallet_filler: Arc<EthereumFillProvider>,
-    provider: Arc<RootProvider<Http<Client>>>,
-    client: ProverClient,
     pk: SP1ProvingKey,
     vk: SP1VerifyingKey,
     contract_address: Address,
-    relayer_address: Address,
+    rpc_url: Url,
     chain_id: u64,
     use_kms_relayer: bool,
 }
@@ -85,7 +74,7 @@ impl VectorXOperator {
     async fn new() -> Self {
         dotenv::dotenv().ok();
 
-        let client = ProverClient::new();
+        let client = ProverClient::builder().mock().build();
         let (pk, vk) = client.setup(SP1_VECTOR_ELF);
         let use_kms_relayer: bool = env::var("USE_KMS_RELAYER")
             .unwrap_or("false".to_string())
@@ -100,29 +89,17 @@ impl VectorXOperator {
             .parse()
             .unwrap();
 
-        let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY not set");
         let contract_address = env::var("CONTRACT_ADDRESS")
             .expect("CONTRACT_ADDRESS not set")
             .parse()
             .unwrap();
-        let signer: PrivateKeySigner = private_key.parse().expect("Failed to parse private key");
-        let relayer_address = signer.address();
-        let wallet = EthereumWallet::from(signer);
-        let wallet_filler = ProviderBuilder::new()
-            .filler(GasFiller)
-            .filler(ChainIdFiller::default())
-            .wallet(wallet)
-            .on_http(rpc_url);
 
         Self {
-            client,
             pk,
             vk,
-            provider: Arc::new(wallet_filler.root().clone()),
-            wallet_filler: Arc::new(wallet_filler),
+            rpc_url,
             chain_id,
             contract_address,
-            relayer_address,
             use_kms_relayer,
         }
     }
@@ -136,8 +113,9 @@ impl VectorXOperator {
         let fetcher = RpcDataFetcher::new().await;
 
         let proof_type = ProofType::HeaderRangeProof;
+        let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
         // Fetch the header range commitment tree size from the contract.
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
+        let contract = SP1Vector::new(self.contract_address, provider.clone());
         let output = contract
             .headerRangeCommitmentTreeSize()
             .call()
@@ -158,8 +136,9 @@ impl VectorXOperator {
             header_range_request.trusted_block, header_range_request.target_block
         );
 
-        self.client
-            .prove(&self.pk, stdin)
+        let prover_client = ProverClient::builder().network().build();
+        prover_client
+            .prove(&self.pk, &stdin)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run()
@@ -184,8 +163,9 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
-        self.client
-            .prove(&self.pk, stdin)
+        let prover_client = ProverClient::builder().network().build();
+        prover_client
+            .prove(&self.pk, &stdin)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run()
@@ -277,7 +257,8 @@ impl VectorXOperator {
     async fn get_contract_data_for_header_range(&self) -> Result<HeaderRangeContractData> {
         let fetcher = RpcDataFetcher::new().await;
 
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
+        let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
+        let contract = SP1Vector::new(self.contract_address, provider);
 
         let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
         let header_range_commitment_tree_size = contract
@@ -308,7 +289,8 @@ impl VectorXOperator {
 
     // Current block and whether next authority set hash exists.
     async fn get_contract_data_for_rotate(&self) -> Result<RotateContractData> {
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
+        let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
+        let contract = SP1Vector::new(self.contract_address, provider);
 
         // Fetch the current block from the contract
         let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
@@ -418,7 +400,8 @@ impl VectorXOperator {
         };
 
         if self.use_kms_relayer {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
+            let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
+            let contract = SP1Vector::new(self.contract_address, provider);
             let proof_bytes = proof_as_bytes.clone().into();
             let public_values = proof.public_values.to_vec().into();
             let commit_header_range = contract.commitHeaderRange(proof_bytes, public_values);
@@ -433,30 +416,22 @@ impl VectorXOperator {
             )
             .await
         } else {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
-            let gas_limit = relay::get_gas_limit(self.chain_id);
-            let max_fee_per_gas =
-                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
-
-            // Wait for 3 required confirmations with a timeout of 60 seconds.
-            const NUM_CONFIRMATIONS: u64 = 3;
-            const TIMEOUT_SECONDS: u64 = 60;
-
-            let current_nonce = self
-                .wallet_filler
-                .get_transaction_count(self.relayer_address)
-                .await?;
+            let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY not set");
+            let signer: PrivateKeySigner =
+                private_key.parse().expect("Failed to parse private key");
+            let wallet = EthereumWallet::from(signer);
+            let provider = ProviderBuilder::new()
+                .with_recommended_fillers()
+                .wallet(wallet)
+                .on_http(self.rpc_url.clone());
+            let contract = SP1Vector::new(self.contract_address, provider);
 
             let receipt = contract
                 .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
-                .gas_price(max_fee_per_gas)
-                .gas(gas_limit)
-                .nonce(current_nonce)
                 .send()
                 .await?
                 .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
                 .get_receipt()
                 .await?;
 
@@ -481,7 +456,8 @@ impl VectorXOperator {
         };
 
         if self.use_kms_relayer {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.root().clone());
+            let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
+            let contract = SP1Vector::new(self.contract_address, provider);
             let proof_bytes = proof_as_bytes.clone().into();
             let public_values = proof.public_values.to_vec().into();
             let rotate = contract.rotate(proof_bytes, public_values);
@@ -496,30 +472,21 @@ impl VectorXOperator {
             )
             .await
         } else {
-            let contract = SP1Vector::new(self.contract_address, self.wallet_filler.clone());
-
-            let gas_limit = relay::get_gas_limit(self.chain_id);
-            let max_fee_per_gas =
-                relay::get_fee_cap(self.chain_id, self.wallet_filler.root()).await;
-
-            // Wait for 3 required confirmations with a timeout of 60 seconds.
-            const NUM_CONFIRMATIONS: u64 = 3;
-            const TIMEOUT_SECONDS: u64 = 60;
-
-            let current_nonce = self
-                .wallet_filler
-                .get_transaction_count(self.relayer_address)
-                .await?;
-
+            let private_key = env::var("PRIVATE_KEY").expect("PRIVATE_KEY not set");
+            let signer: PrivateKeySigner =
+                private_key.parse().expect("Failed to parse private key");
+            let wallet = EthereumWallet::from(signer);
+            let provider = ProviderBuilder::new()
+                .with_recommended_fillers()
+                .wallet(wallet)
+                .on_http(self.rpc_url.clone());
+            let contract = SP1Vector::new(self.contract_address, provider);
             let receipt = contract
                 .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
-                .gas_price(max_fee_per_gas)
-                .gas(gas_limit)
-                .nonce(current_nonce)
                 .send()
                 .await?
                 .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(TIMEOUT_SECONDS)))
+                .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
                 .get_receipt()
                 .await?;
 
@@ -535,7 +502,8 @@ impl VectorXOperator {
     /// Check the verifying key in the contract matches the verifying key in the prover.
     async fn check_vkey(&self) -> Result<()> {
         // Check that the verifying key in the contract matches the verifying key in the prover.
-        let contract = SP1Vector::new(self.contract_address, self.provider.clone());
+        let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
+        let contract = SP1Vector::new(self.contract_address, provider);
         let verifying_key = contract
             .vectorXProgramVkey()
             .call()

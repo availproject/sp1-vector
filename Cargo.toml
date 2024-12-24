@@ -26,8 +26,8 @@ alloy = { version = "0.8.0", features = ["full"] }
 chrono = "0.4.39"
 
 
-sp1-sdk = "3.0.0"
-sp1-build = "3.0.0"
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1.git", branch = "dev" }
 
 reqwest = { version = "0.11.20", features = ["json"] }
 futures = "0.3.30"
@@ -56,6 +56,6 @@ sp-core = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "pol
 sp-io = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-5" }
 sp-runtime = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-5" }
 sp-std = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-5" }
-ed25519-consensus = { git = "https://github.com/sp1-patches/ed25519-consensus", branch = "patch-v2.1.0" }
-sha2-v0-9-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes-fork", package = "sha2", branch = "patch-sha2-v0.9.9" }
-sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", branch = "patch-v0.10.8" }
+ed25519-consensus = { git = "https://github.com/sp1-patches/ed25519-consensus", tag = "ed25519_consensus-v2.1.0-patch-v1" }
+sha2-v0-9-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "sha2-v0.9.8-patch-v1" }
+sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "sha2-v0.10.8-patch-v1" }

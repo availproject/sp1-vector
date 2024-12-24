@@ -50,9 +50,9 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let client = ProverClient::new();
+    let client = ProverClient::builder().mock().build();
 
-    let (pv, report) = client.execute(SP1_VECTOR_ELF, stdin).run()?;
+    let (pv, report) = client.execute(SP1_VECTOR_ELF, &stdin).run()?;
 
     let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
 
