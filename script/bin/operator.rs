@@ -392,17 +392,10 @@ impl VectorXOperator {
 
     /// Relay a header range proof to the SP1 SP1Vector contract.
     async fn relay_header_range(&self, proof: SP1ProofWithPublicValues) -> Result<B256> {
-        // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            vec![]
-        } else {
-            proof.bytes()
-        };
-
         if self.use_kms_relayer {
             let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
             let contract = SP1Vector::new(self.contract_address, provider);
-            let proof_bytes = proof_as_bytes.clone().into();
+            let proof_bytes = proof.bytes().clone().into();
             let public_values = proof.public_values.to_vec().into();
             let commit_header_range = contract.commitHeaderRange(proof_bytes, public_values);
             relay::relay_with_kms(
@@ -427,7 +420,7 @@ impl VectorXOperator {
             let contract = SP1Vector::new(self.contract_address, provider);
 
             let receipt = contract
-                .commitHeaderRange(proof_as_bytes.into(), proof.public_values.to_vec().into())
+                .commitHeaderRange(proof.bytes().into(), proof.public_values.to_vec().into())
                 .send()
                 .await?
                 .with_required_confirmations(NUM_CONFIRMATIONS)
@@ -448,17 +441,10 @@ impl VectorXOperator {
 
     /// Relay a rotate proof to the SP1 SP1Vector contract.
     async fn relay_rotate(&self, proof: SP1ProofWithPublicValues) -> Result<B256> {
-        // TODO: sp1_sdk should return empty bytes in mock mode.
-        let proof_as_bytes = if env::var("SP1_PROVER").unwrap().to_lowercase() == "mock" {
-            vec![]
-        } else {
-            proof.bytes()
-        };
-
         if self.use_kms_relayer {
             let provider = ProviderBuilder::new().on_http(self.rpc_url.clone());
             let contract = SP1Vector::new(self.contract_address, provider);
-            let proof_bytes = proof_as_bytes.clone().into();
+            let proof_bytes = proof.bytes().clone().into();
             let public_values = proof.public_values.to_vec().into();
             let rotate = contract.rotate(proof_bytes, public_values);
             relay::relay_with_kms(
@@ -482,7 +468,7 @@ impl VectorXOperator {
                 .on_http(self.rpc_url.clone());
             let contract = SP1Vector::new(self.contract_address, provider);
             let receipt = contract
-                .rotate(proof_as_bytes.into(), proof.public_values.to_vec().into())
+                .rotate(proof.bytes().into(), proof.public_values.to_vec().into())
                 .send()
                 .await?
                 .with_required_confirmations(NUM_CONFIRMATIONS)
