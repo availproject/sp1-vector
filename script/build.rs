@@ -6,7 +6,7 @@ fn main() {
     //     "../program",
     //     BuildArgs {
     //         docker: true,
-    //         elf_name: "sp1-vector-docker".to_string(),
+    //         elf_name: "vector-elf".to_string(),
     //         tag: "v3.0.0".to_string(),
     //         ..Default::default()
     //     },

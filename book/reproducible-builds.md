@@ -33,8 +33,8 @@ Then build the binaries:
 ```bash
 cd program
 
-# Builds the SP1 Vector binary using the corresponding Docker tag, output directory and ELF name.
-cargo prove build --docker --tag v3.0.0 --output-directory ../script --elf-name sp1-vector-docker
+# Builds the SP1 Vector binary using the corresponding Docker tag and ELF name.
+cargo prove build --docker --tag v3.0.0 --elf-name vector-elf
 ```
 
 Now, verify the binaries by confirming the output of `vkey` matches the vkeys on the contract. The `vkey` program outputs the verification key

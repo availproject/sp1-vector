@@ -6,7 +6,7 @@ async fn main() -> anyhow::Result<()> {
     let client = ProverClient::builder().mock().build();
     let (_pk, vk) = client.setup(SP1_VECTOR_ELF);
 
-    println!("VK={}", vk.bytes32());
+    println!("VK: {}", vk.bytes32());
 
     Ok(())
 }

@@ -1,7 +1,6 @@
 pub mod relay;
 
-pub const SP1_VECTOR_DOCKER_ELF: &[u8] = include_bytes!("../../elf/sp1-vector-docker");
-pub const SP1_VECTOR_ELF: &[u8] = include_bytes!("../../elf/sp1-vector-docker");
+pub const SP1_VECTOR_ELF: &[u8] = include_bytes!("../../elf/vector-elf");
 
 #[cfg(test)]
 mod tests {
