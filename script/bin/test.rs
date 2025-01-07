@@ -1,11 +1,9 @@
 //! A simple script to test the generation of proofs.
 
-use alloy::sol_types::SolType;
 use clap::Parser;
-use rand::Rng;
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
-use sp1_vector_primitives::types::{ProofOutput, ProofType};
+use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 // Requires the following environment variables to be set:
