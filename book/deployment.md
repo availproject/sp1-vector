@@ -62,6 +62,8 @@ Here's how to deploy an SP1 Vector contract for an Avail chain.
     export NETWORK_PRIVATE_KEY=<NETWORK_PRIVATE_KEY>
     # If you're using a custom endpoint, set NETWORK_RPC_URL to the URL of the endpoint you want to use.
     export NETWORK_RPC_URL=<NETWORK_RPC_URL>
+    # If you're generating proofs in mock mode, set SP1_PROVER to "mock".
+    export SP1_PROVER={mock}
     ```
 
 5. Run the SP1 Vector operator to update the LC continuously.
