@@ -7,7 +7,6 @@ services:
     repo: https://github.com/succinctlabs/sp1-vector
     region: oregon
     plan: standard
-    branch: ratan/v4
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -41,7 +40,6 @@ services:
     repo: https://github.com/succinctlabs/sp1-vector
     region: oregon
     plan: standard
-    branch: ratan/v4
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -98,7 +96,6 @@ services:
     repo: https://github.com/succinctlabs/sp1-vector
     region: oregon
     plan: standard
-    branch: ratan/v4
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -120,7 +117,6 @@ services:
     repo: https://github.com/succinctlabs/sp1-vector
     region: oregon
     plan: standard
-    branch: ratan/v4
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -142,7 +138,6 @@ services:
     repo: https://github.com/succinctlabs/sp1-vector
     region: oregon
     plan: standard
-    branch: ratan/v4
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
@@ -167,7 +162,7 @@ services:
     rootDir: script
     buildCommand: rm -rf build.rs && cargo build --bin operator --release
     startCommand: cargo run --bin operator --release
-    autoDeploy: true
+    autoDeploy: false
     envVars:
       - key: CHAIN_ID
         value: 1
