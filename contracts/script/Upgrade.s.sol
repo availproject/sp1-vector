@@ -17,7 +17,6 @@ import {BaseScript} from "./Base.s.sol";
 // - CHAINS (comma separated list of chain names)
 // - CONTRACT_ADDRESS_{CHAIN_ID}
 // - SP1_VECTOR_PROGRAM_VKEY
-// - SP1_VERIFIER_ADDRESS
 
 contract UpgradeScript is BaseScript {
     using stdJson for string;

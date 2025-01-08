@@ -8,8 +8,6 @@ import {BaseScript} from "./Base.s.sol";
 // Required environment variables:
 // - CHAINS (comma separated list of chain names)
 // - CONTRACT_ADDRESS_{CHAIN_ID}
-// - SP1_VECTOR_PROGRAM_VKEY
-// - SP1_VERIFIER_ADDRESS
 
 contract UpdateVkeyScript is BaseScript {
     using stdJson for string;
