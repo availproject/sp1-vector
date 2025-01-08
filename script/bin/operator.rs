@@ -15,8 +15,8 @@ use anyhow::Result;
 use log::{error, info};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{
-    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
+    network::FulfillmentStrategy, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
+    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
@@ -136,9 +136,20 @@ impl VectorXOperator {
             header_range_request.trusted_block, header_range_request.target_block
         );
 
+        // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
+        if let Ok(prover_type) = env::var("SP1_PROVER") {
+            if prover_type == "mock" {
+                let prover_client = ProverClient::builder().mock().build();
+                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+                return Ok(proof);
+            }
+        }
+
         let prover_client = ProverClient::builder().network().build();
         prover_client
             .prove(&self.pk, &stdin)
+            .strategy(FulfillmentStrategy::Reserved)
+            .skip_simulation(true)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run()
@@ -163,9 +174,20 @@ impl VectorXOperator {
             current_authority_set_id + 1
         );
 
+        // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
+        if let Ok(prover_type) = env::var("SP1_PROVER") {
+            if prover_type == "mock" {
+                let prover_client = ProverClient::builder().mock().build();
+                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+                return Ok(proof);
+            }
+        }
+
         let prover_client = ProverClient::builder().network().build();
         prover_client
             .prove(&self.pk, &stdin)
+            .strategy(FulfillmentStrategy::Reserved)
+            .skip_simulation(true)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run()
@@ -207,15 +229,14 @@ impl VectorXOperator {
             .get_authority_set_id(header_range_contract_data.vectorx_latest_block - 1)
             .await;
 
-        println!("current_authority_set_id: {}", current_authority_set_id);
+        info!("current_authority_set_id: {}", current_authority_set_id);
         // Get the last justified block by the current authority set id.
         let last_justified_block = fetcher.last_justified_block(current_authority_set_id).await;
-        println!("last_justified_block: {}", last_justified_block);
 
         // If this is the last justified block, check for header range with next authority set.
         let mut request_authority_set_id = current_authority_set_id;
-        println!("last_justified_block: {}", last_justified_block);
-        println!(
+        info!("last_justified_block: {}", last_justified_block);
+        info!(
             "vectorx_latest_block: {}",
             header_range_contract_data.vectorx_latest_block
         );
@@ -241,7 +262,7 @@ impl VectorXOperator {
             )
             .await;
 
-        println!("block_to_step_to: {:?}", block_to_step_to);
+        info!("block_to_step_to: {:?}", block_to_step_to);
 
         if let Some(block_to_step_to) = block_to_step_to {
             return Ok(Some(HeaderRangeRequestData {
@@ -350,9 +371,9 @@ impl VectorXOperator {
             avail_current_block,
         );
 
-        println!("max_valid_block_to_step_to: {}", max_valid_block_to_step_to);
-        println!("avail_current_block: {}", avail_current_block);
-        println!("block interval: {}", ideal_block_interval);
+        info!("max_valid_block_to_step_to: {}", max_valid_block_to_step_to);
+        info!("avail_current_block: {}", avail_current_block);
+        info!("block interval: {}", ideal_block_interval);
 
         // Find the closest block to the maximum valid block to step to that is a multiple of
         // ideal_block_interval.
