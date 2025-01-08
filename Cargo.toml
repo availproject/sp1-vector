@@ -25,8 +25,8 @@ itertools = "0.10.5"
 alloy = { version = "0.8.0", features = ["full"] }
 chrono = "0.4.39"
 
-sp1-sdk = { version = "4.0.0-rc.8" }
-sp1-build = { version = "4.0.0-rc.8" }
+sp1-sdk = "4.0.0-rc.8"
+sp1-build = "4.0.0-rc.8"
 
 reqwest = { version = "0.11.20", features = ["json"] }
 futures = "0.3.30"
