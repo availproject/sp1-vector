@@ -58,10 +58,10 @@ Here's how to deploy an SP1 Vector contract for an Avail chain.
     export PRIVATE_KEY=<PRIVATE_KEY>
 
     # Optional
-    # If you're using the Succinct network, set SP1_PROVER to "network". Otherwise, set it to "local" or "mock".
-    export SP1_PROVER={network|local|mock}
-    # Only required if SP1_PROVER is set "network".
-    export SP1_PRIVATE_KEY=<SP1_PRIVATE_KEY>
+    # If you're generating proofs on the Succinct Network, set NETWORK_PRIVATE_KEY to the private key of the account you want to use.
+    export NETWORK_PRIVATE_KEY=<NETWORK_PRIVATE_KEY>
+    # If you're using a custom endpoint, set NETWORK_RPC_URL to the URL of the endpoint you want to use.
+    export NETWORK_RPC_URL=<NETWORK_RPC_URL>
     ```
 
 5. Run the SP1 Vector operator to update the LC continuously.
