@@ -32,8 +32,10 @@ serde = { version = "1", features = ["derive"] }
 itertools = "0.10.5"
 chrono = "0.4.39"
 
+# sp1
 sp1-sdk = "4.0.0-rc.9"
 sp1-build = "4.0.0-rc.9"
+sp1-zkvm = "4.0.0-rc.9"
 
 reqwest = { version = "0.11.20", features = ["json"] }
 futures = "0.3.30"
