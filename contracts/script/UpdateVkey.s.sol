@@ -24,6 +24,6 @@ contract UpdateVkeyScript is BaseScript {
         SP1Vector sp1Vector = SP1Vector(address(existingProxyAddress));
 
         // v4 program vkey
-        sp1Vector.updateVectorXProgramVkey(0x0085e1f9e1bcc361ba6edc00209f453addcbcaf71c1e63d174472f8df5e56875);
+        sp1Vector.updateVectorXProgramVkey(0x00c7280e2fd5c4e785f4b599c8ab98f888cb0ba347839733ec75296e58620b8e);
     }
 }
