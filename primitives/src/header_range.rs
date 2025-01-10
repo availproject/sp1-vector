@@ -17,6 +17,8 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     // 3. Compute the simple merkle tree commitment for the headers.
     // 4. Verify the justification is valid.
     // 5. Verify the justification is linked to the target block.
+    // 6. Commit to the authority set hash used for the justification. This will be verified
+    //    to match the current authority set hash in the SP1Vector contract when the proof is verified.
 
     // Stage 1: Decode and get the hashes of all of the headers.
     let header_data: Vec<DecodedHeaderData> = header_range_inputs
@@ -73,7 +75,8 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     let current_authority_set_hash =
         compute_authority_set_commitment(&header_range_inputs.target_justification.valset_pubkeys);
 
-    // Stage 5: Verify the block hash the justification is signed over matches the last header hash.
+    // Stage 6: Verify the block hash the justification is signed over matches the last header hash
+    // in the header chain commitment.
     assert_eq!(
         header_range_inputs.target_justification.block_hash,
         header_data[header_data.len() - 1].header_hash
@@ -95,7 +98,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     .unwrap()
 }
 
-/// Decode the header into a DecodedHeaderData struct manually.
+/// Decode the header into a DecodedHeaderData struct manually and compute the header hash.
 fn decode_header(header_bytes: Vec<u8>) -> DecodedHeaderData {
     // The first 32 bytes are the parent hash.
     let mut cursor: usize = 32;
