@@ -1,4 +1,4 @@
-use crate::{compute_authority_set_commitment, hash_encoded_header, types::CircuitJustification};
+use crate::{hash_encoded_header, types::CircuitJustification};
 use codec::Encode;
 use ed25519_consensus::{Signature, VerificationKey};
 use std::collections::HashMap;
