@@ -94,11 +94,7 @@ pub fn verify_justification(justification: &CircuitJustification) {
         .filter(|x| justification.valset_pubkeys.iter().any(|e| e.0.eq(&x[..])))
         .count();
 
-    // 4. Verify that the valset_pubkeys correspond to the current_authority_set_hash.
-    let current_authority_set_hash = compute_authority_set_commitment(&justification.valset_pubkeys);
-    assert_eq!(current_authority_set_hash, justification.current_authority_set_hash);
-
-    // 5. Confirm that the supermajority of the validator set is achieved.
+    // 4. Confirm that the supermajority of the validator set is achieved.
     assert!(
         is_signed_by_supermajority(num_matched_addresses, justification.valset_pubkeys.len()),
         "More than 2/3 of signatures are not verifie!"

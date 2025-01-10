@@ -597,7 +597,6 @@ pub fn convert_justification_and_valset_to_circuit(
         authority_set_id: set_id,
         valset_pubkeys: validator_set.clone(),
         precommits,
-        current_authority_set_hash,
         block_hash: justification.commit.target_hash.0.into(),
         ancestries_encoded,
     }

@@ -90,8 +90,6 @@ pub struct CircuitJustification {
     pub valset_pubkeys: Vec<B256>,
     /// Precommits containing signatures of a subset of authority set
     pub precommits: Vec<Precommit>,
-    /// Hash of authority set
-    pub current_authority_set_hash: B256,
     /// Hash of the block associated with the justification.
     pub block_hash: B256,
     /// Vector of encoded headers needed to prove precommit target ancestry.

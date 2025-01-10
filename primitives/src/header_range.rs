@@ -4,7 +4,10 @@ use alloy_sol_types::SolType;
 use crate::consts::HEADER_OUTPUTS_LENGTH;
 use crate::merkle::get_merkle_root_commitments;
 use crate::types::{DecodedHeaderData, HeaderRangeInputs, HeaderRangeOutputs};
-use crate::{decode_scale_compact_int, hash_encoded_header, verify_justification};
+use crate::{
+    compute_authority_set_commitment, decode_scale_compact_int, hash_encoded_header,
+    verify_justification,
+};
 
 /// Verify the justification from the current authority set on target block and compute the
 /// state and data root commitments over the range [trusted_block + 1, target_block] inclusive.
@@ -23,7 +26,10 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
         .collect();
 
     // Assert the first header hash matches the trusted header hash.
-    assert_eq!(header_data[0].header_hash, header_range_inputs.trusted_header_hash);
+    assert_eq!(
+        header_data[0].header_hash,
+        header_range_inputs.trusted_header_hash
+    );
     // Verify the first block number matches the trusted block.
     assert_eq!(
         header_data[0].block_number,
@@ -49,28 +55,35 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
 
     // Verify the number of headers is equal to the number of headers in the range. This is implicitly
     // covered by the assertions + loop above, but we add this assertion for clarity.
-    assert!((header_range_inputs.target_block - header_range_inputs.trusted_block) + 1 == header_data.len() as u32);
+    assert!(
+        (header_range_inputs.target_block - header_range_inputs.trusted_block) + 1
+            == header_data.len() as u32
+    );
 
     // Stage 3: Compute the simple Merkle tree commitment for the headers. Note: Does not include
     // the trusted header in the commitment.
-    let (state_root_commitment, data_root_commitment) = get_merkle_root_commitments(
-        &header_data[1..],
-        header_range_inputs.merkle_tree_size,
-    );
+    let (state_root_commitment, data_root_commitment) =
+        get_merkle_root_commitments(&header_data[1..], header_range_inputs.merkle_tree_size);
 
     // Stage 4: Verify the justification is valid.
     verify_justification(&header_range_inputs.target_justification);
 
+    // Stage 5. Compute the authority set hash for the justification. This is verified to match
+    // the current authority set hash in the SP1Vector contract when the proof is verified.
+    let current_authority_set_hash =
+        compute_authority_set_commitment(&header_range_inputs.target_justification.valset_pubkeys);
+
     // Stage 5: Verify the block hash the justification is signed over matches the last header hash.
-    assert_eq!(header_range_inputs.target_justification.block_hash, header_data[header_data.len() - 1].header_hash);
+    assert_eq!(
+        header_range_inputs.target_justification.block_hash,
+        header_data[header_data.len() - 1].header_hash
+    );
 
     HeaderRangeOutputs::abi_encode(&(
         header_range_inputs.trusted_block,
         header_range_inputs.trusted_header_hash,
         header_range_inputs.target_justification.authority_set_id,
-        header_range_inputs
-            .target_justification
-            .current_authority_set_hash,
+        current_authority_set_hash,
         header_range_inputs.target_block,
         // Target header hash.
         header_data[header_data.len() - 1].header_hash,
