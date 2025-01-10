@@ -20,6 +20,10 @@ pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH]
         rotate_inputs.header_rotate_data.pubkeys.clone(),
     );
 
+    // Compute the current authority set hash from the public keys used in the justification.
+    let current_authority_set_hash =
+        compute_authority_set_commitment(&rotate_inputs.justification.valset_pubkeys);
+
     // Compute new authority set hash from the public keys that are encoded in the epoch end header.
     let new_authority_set_hash =
         compute_authority_set_commitment(&rotate_inputs.header_rotate_data.pubkeys);
@@ -27,7 +31,7 @@ pub fn verify_rotate(rotate_inputs: RotateInputs) -> [u8; ROTATE_OUTPUTS_LENGTH]
     // Return the ABI encoded RotateOutputs.
     RotateOutputs::abi_encode(&(
         rotate_inputs.justification.authority_set_id,
-        rotate_inputs.justification.current_authority_set_hash,
+        current_authority_set_hash,
         new_authority_set_hash,
     ))
     .try_into()
