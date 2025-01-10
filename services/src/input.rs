@@ -590,7 +590,6 @@ pub fn convert_justification_and_valset_to_circuit(
         .iter()
         .map(Encode::encode)
         .collect::<Vec<_>>();
-    let current_authority_set_hash = compute_authority_set_commitment(&validator_set[..]);
 
     CircuitJustification {
         round: justification.round,
