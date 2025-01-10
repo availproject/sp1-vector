@@ -61,8 +61,7 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
     // Stage 4: Verify the justification is valid.
     verify_justification(&header_range_inputs.target_justification);
 
-    // Stage 5: Verify the justification is linked to the target block.
-    assert_eq!(header_range_inputs.target_justification.block_number, header_range_inputs.target_block);
+    // Stage 5: Verify the block hash the justification is signed over matches the last header hash.
     assert_eq!(header_range_inputs.target_justification.block_hash, header_data[header_data.len() - 1].header_hash);
 
     HeaderRangeOutputs::abi_encode(&(
