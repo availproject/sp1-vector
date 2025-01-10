@@ -9,61 +9,61 @@ use crate::{decode_scale_compact_int, hash_encoded_header, verify_justification}
 /// Verify the justification from the current authority set on target block and compute the
 /// state and data root commitments over the range [trusted_block + 1, target_block] inclusive.
 pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADER_OUTPUTS_LENGTH] {
-    let encoded_headers = header_range_inputs.encoded_headers;
-
-    // 1. Decode the headers using: https://github.com/succinctlabs/vectorx/blob/fb83641259aef1f5df33efa73c23d90973d64e24/circuits/builder/decoder.rs#L104-L157
+    // 1. Decode the headers using: https://github.com/availproject/avail-core/blob/main/core/src/header/mod.rs#L44-L66.
     // 2. Verify the chain of headers is connected from the trusted block to the target block.
-    // 3. Verify the justification is valid.
-    // 4. Compute the simple merkle tree commitment for the headers.
+    // 3. Compute the simple merkle tree commitment for the headers.
+    // 4. Verify the justification is valid.
+    // 5. Verify the justification is linked to the target block.
 
-    // Stage 1: Decode the headers.
-    // Decode the headers.
-    let decoded_headers_data: Vec<DecodedHeaderData> = encoded_headers
+    // Stage 1: Decode and get the hashes of all of the headers.
+    let header_data: Vec<DecodedHeaderData> = header_range_inputs
+        .encoded_headers
         .iter()
-        .map(|header_bytes| decode_header(header_bytes.to_vec()))
+        .map(|header_bytes| (decode_header(header_bytes.to_vec())))
         .collect();
 
-    // Get the hashes of all of the headers.
-    let header_hashes = encoded_headers
-        .iter()
-        .map(|e| hash_encoded_header(e.as_slice()))
-        .collect::<Vec<_>>();
-
     // Assert the first header hash matches the trusted header hash.
-    assert_eq!(header_hashes[0], header_range_inputs.trusted_header_hash);
+    assert_eq!(header_data[0].header_hash, header_range_inputs.trusted_header_hash);
+    // Verify the first block number matches the trusted block.
     assert_eq!(
-        decoded_headers_data[0].block_number,
+        header_data[0].block_number,
         header_range_inputs.trusted_block
     );
-
-    // Stage 2: Verify the chain of headers is connected from the trusted block to the target block
-    // by verifying the parent hashes are linked and the block numbers are sequential.
-    for i in 1..(header_range_inputs.target_block - header_range_inputs.trusted_block + 1) as usize
-    {
-        // Verify the headers are linked.
-        assert_eq!(header_hashes[i - 1], decoded_headers_data[i].parent_hash);
-        // Verify the block numbers are sequential.
-        assert_eq!(
-            decoded_headers_data[i - 1].block_number + 1,
-            decoded_headers_data[i].block_number
-        );
-    }
-
     // Verify that the last header matches the target block.
     assert_eq!(
-        decoded_headers_data[decoded_headers_data.len() - 1].block_number,
+        header_data[header_data.len() - 1].block_number,
         header_range_inputs.target_block
     );
 
-    // Stage 3: Verify the justification is valid.
-    verify_justification(&header_range_inputs.target_justification);
+    // Stage 2: Verify the chain of all headers is connected from the trusted block to the target block
+    // by verifying the parent hashes are linked and the block numbers are sequential.
+    for i in 1..header_data.len() {
+        // Verify the headers are linked.
+        assert_eq!(header_data[i - 1].header_hash, header_data[i].parent_hash);
+        // Verify the block numbers are sequential.
+        assert_eq!(
+            header_data[i - 1].block_number + 1,
+            header_data[i].block_number
+        );
+    }
 
-    // Stage 4: Compute the simple Merkle tree commitment for the headers. Note: Does not include
+    // Verify the number of headers is equal to the number of headers in the range. This is implicitly
+    // covered by the assertions + loop above, but we add this assertion for clarity.
+    assert!((header_range_inputs.target_block - header_range_inputs.trusted_block) + 1 == header_data.len() as u32);
+
+    // Stage 3: Compute the simple Merkle tree commitment for the headers. Note: Does not include
     // the trusted header in the commitment.
     let (state_root_commitment, data_root_commitment) = get_merkle_root_commitments(
-        &decoded_headers_data[1..],
+        &header_data[1..],
         header_range_inputs.merkle_tree_size,
     );
+
+    // Stage 4: Verify the justification is valid.
+    verify_justification(&header_range_inputs.target_justification);
+
+    // Stage 5: Verify the justification is linked to the target block.
+    assert_eq!(header_range_inputs.target_justification.block_number, header_range_inputs.target_block);
+    assert_eq!(header_range_inputs.target_justification.block_hash, header_data[header_data.len() - 1].header_hash);
 
     HeaderRangeOutputs::abi_encode(&(
         header_range_inputs.trusted_block,
@@ -73,7 +73,8 @@ pub fn verify_header_range(header_range_inputs: HeaderRangeInputs) -> [u8; HEADE
             .target_justification
             .current_authority_set_hash,
         header_range_inputs.target_block,
-        header_hashes[header_hashes.len() - 1],
+        // Target header hash.
+        header_data[header_data.len() - 1].header_hash,
         state_root_commitment,
         data_root_commitment,
         header_range_inputs.merkle_tree_size as u32,
@@ -98,10 +99,14 @@ fn decode_header(header_bytes: Vec<u8>) -> DecodedHeaderData {
     // The last 32 bytes are the data root.
     let data_root = B256::from_slice(&header_bytes[header_bytes.len() - 32..header_bytes.len()]);
 
+    // Get the header hash.
+    let header_hash = hash_encoded_header(header_bytes.as_slice());
+
     DecodedHeaderData {
         block_number: block_nb as u32,
         parent_hash,
         state_root,
         data_root,
+        header_hash,
     }
 }

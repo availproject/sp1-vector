@@ -33,7 +33,7 @@ async fn main() -> anyhow::Result<()> {
     let target_block = args.target_block;
 
     let authority_set_id = 282u64;
-    let proof_type = ProofType::RotateProof;
+    let proof_type = ProofType::HeaderRangeProof;
 
     let fetcher = RpcDataFetcher::new().await;
     let mut stdin: SP1Stdin = SP1Stdin::new();

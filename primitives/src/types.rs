@@ -120,4 +120,6 @@ pub struct DecodedHeaderData {
     pub state_root: B256,
     /// Data root of the block.
     pub data_root: B256,
+    /// Hash of the header.
+    pub header_hash: B256,
 }
