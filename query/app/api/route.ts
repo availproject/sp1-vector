@@ -77,25 +77,14 @@ const fetchDataRootsForRange = async (
     chainName: string
 ): Promise<Uint8Array[]> => {
     const api = await initialize(CHAIN_TO_WS_ENDPOINT.get(chainName.toLowerCase()) as string);
-    const MAX_CONCURRENT_WS_REQUESTS = 100;
 
-    const blockRanges = [];
-    for (let currBlock = startBlock; currBlock < endBlock; currBlock += MAX_CONCURRENT_WS_REQUESTS) {
-        const rangeEndBlock = Math.min(currBlock + MAX_CONCURRENT_WS_REQUESTS, endBlock);
-        blockRanges.push(Array.from(
-            { length: rangeEndBlock - currBlock },
-            (_, i) => currBlock + i
-        ));
-    }
-
-    const dataRoots = await Promise.all(
-        blockRanges.map(async range => {
-            const rangeDataRoots = await Promise.all(range.map(x => fetchDataRoot(api, x)));
-            return rangeDataRoots;
-        })
+    const blockNumbers = Array.from(
+        { length: endBlock - startBlock },
+        (_, i) => startBlock + i
     );
 
-    return dataRoots.flat();
+    const dataRoots = await Promise.all(blockNumbers.map(x => fetchDataRoot(api, x)));
+    return dataRoots;
 };
 
 /** Compute the Merkle tree branch for the requested block number. */
@@ -385,7 +374,7 @@ export async function GET(req: NextRequest) {
     if (requestedBlock < blockRange.start || requestedBlock > blockRange.end) {
         return NextResponse.json({
             success: false,
-            error: 'Requested block is not in the range of blocks contained in the VectorX contract.'
+            error: `Requested block ${requestedBlock} is not in the range of blocks [${blockRange.start}, ${blockRange.end}] contained in the VectorX contract.`
         });
     }
 
