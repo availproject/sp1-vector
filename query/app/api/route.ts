@@ -367,7 +367,7 @@ export async function GET(req: NextRequest) {
     if (blockRange === undefined) {
         return NextResponse.json({
             success: false,
-            error: 'Block range not found!'
+            error: 'Getting the block range covered by the VectorX contract failed!'
         });
     }
 
@@ -379,8 +379,6 @@ export async function GET(req: NextRequest) {
     }
 
     try {
-        console.log('Getting block hash and data commitment range...');
-        const startTime = performance.now();
         let promises = [
             getBlockHash(requestedBlock, chainName!),
             // Get the data commitment range data for the requested block number.
@@ -388,7 +386,6 @@ export async function GET(req: NextRequest) {
         ];
 
         let [requestedBlockHash, dataCommitmentRange] = await Promise.all(promises);
-        console.log(`Got block hash and data commitment range in ${(performance.now() - startTime).toFixed(2)}ms`);
 
         if (dataCommitmentRange === null) {
             return NextResponse.json({
@@ -401,13 +398,11 @@ export async function GET(req: NextRequest) {
 
         // The Avail Merkle tree root is constructed from the data roots of blocks from the range [startBlockNumber + 1, endBlockNumber] inclusive.
         // Fetch all headers from the RPC.
-        const startTimeDataRoots = performance.now();
         let dataRoots = await fetchDataRootsForRange(
             startBlockNumber + 1,
             endBlockNumber + 1,
             chainName!
         );
-        console.log(`Got data roots in ${(performance.now() - startTimeDataRoots).toFixed(2)}ms`);
 
         // Extend the header array to commitmentTreeSize (fill with empty bytes).
         if (dataRoots.length < commitmentTreeSize) {
