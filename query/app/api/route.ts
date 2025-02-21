@@ -6,7 +6,7 @@ import { ApiPromise, initialize, disconnect } from 'avail-js-sdk';
 import { getChainInfo, queryLogs } from '@/app/utils/shared';
 import { VECTORX_DATA_COMMITMENT_EVENT } from '@/app/utils/abi';
 import { AbiEvent } from 'abitype';
-import { CHAIN_TO_WS_ENDPOINT } from '@/app/utils/avail';
+import { CHAIN_TO_WS_ENDPOINT, getBlockRangeAvail } from '@/app/utils/avail';
 
 type DataCommitmentRange = {
     startBlockNumber: number;
@@ -79,20 +79,23 @@ const fetchDataRootsForRange = async (
     const api = await initialize(CHAIN_TO_WS_ENDPOINT.get(chainName.toLowerCase()) as string);
     const MAX_CONCURRENT_WS_REQUESTS = 100;
 
-    let currBlock = startBlock;
-    let dataRoots: Uint8Array[] = [];
-    while (currBlock < endBlock) {
-        const rangeStartBlock = currBlock;
+    const blockRanges = [];
+    for (let currBlock = startBlock; currBlock < endBlock; currBlock += MAX_CONCURRENT_WS_REQUESTS) {
         const rangeEndBlock = Math.min(currBlock + MAX_CONCURRENT_WS_REQUESTS, endBlock);
-        const blockRange = Array.from(
-            { length: rangeEndBlock - rangeStartBlock },
-            (_, i) => rangeStartBlock + i
-        );
-        const rangeDataRoots = await Promise.all(blockRange.map((x) => fetchDataRoot(api, x)));
-        dataRoots.push(...rangeDataRoots);
-        currBlock = rangeEndBlock;
+        blockRanges.push(Array.from(
+            { length: rangeEndBlock - currBlock },
+            (_, i) => currBlock + i
+        ));
     }
-    return dataRoots;
+
+    const dataRoots = await Promise.all(
+        blockRanges.map(async range => {
+            const rangeDataRoots = await Promise.all(range.map(x => fetchDataRoot(api, x)));
+            return rangeDataRoots;
+        })
+    );
+
+    return dataRoots.flat();
 };
 
 /** Compute the Merkle tree branch for the requested block number. */
@@ -371,7 +374,24 @@ export async function GET(req: NextRequest) {
 
     console.log('Requested block: ' + requestedBlock);
 
+    let blockRange = await getBlockRangeAvail(addressUint8, ethereumChainId);
+    if (blockRange === undefined) {
+        return NextResponse.json({
+            success: false,
+            error: 'Block range not found!'
+        });
+    }
+
+    if (requestedBlock < blockRange.start || requestedBlock > blockRange.end) {
+        return NextResponse.json({
+            success: false,
+            error: 'Requested block is not in the range of blocks contained in the VectorX contract.'
+        });
+    }
+
     try {
+        console.log('Getting block hash and data commitment range...');
+        const startTime = performance.now();
         let promises = [
             getBlockHash(requestedBlock, chainName!),
             // Get the data commitment range data for the requested block number.
@@ -379,6 +399,7 @@ export async function GET(req: NextRequest) {
         ];
 
         let [requestedBlockHash, dataCommitmentRange] = await Promise.all(promises);
+        console.log(`Got block hash and data commitment range in ${(performance.now() - startTime).toFixed(2)}ms`);
 
         if (dataCommitmentRange === null) {
             return NextResponse.json({
@@ -391,20 +412,19 @@ export async function GET(req: NextRequest) {
 
         // The Avail Merkle tree root is constructed from the data roots of blocks from the range [startBlockNumber + 1, endBlockNumber] inclusive.
         // Fetch all headers from the RPC.
+        const startTimeDataRoots = performance.now();
         let dataRoots = await fetchDataRootsForRange(
             startBlockNumber + 1,
             endBlockNumber + 1,
             chainName!
         );
+        console.log(`Got data roots in ${(performance.now() - startTimeDataRoots).toFixed(2)}ms`);
 
         // Extend the header array to commitmentTreeSize (fill with empty bytes).
         if (dataRoots.length < commitmentTreeSize) {
             const additionalRoots = new Array(commitmentTreeSize - dataRoots.length).fill(new Uint8Array(32));
             dataRoots = dataRoots.concat(additionalRoots);
         }
-
-        // Compute the data commitment hash using dataRoots.
-        let expectedDataCommitment = computeDataCommitment(dataRoots, commitmentTreeSize);
 
         // Get the merkle branch for the requested block number by computing the Merkle tree branch
         // of the tree constructed from the data roots.
