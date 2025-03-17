@@ -15,7 +15,7 @@ pub struct GenesisArgs {
     pub block: Option<u32>,
 }
 
-const HEADER_RANGE_COMMITMENT_TREE_SIZE: u32 = 1024;
+const HEADER_RANGE_COMMITMENT_TREE_SIZE: u32 = 2048;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {

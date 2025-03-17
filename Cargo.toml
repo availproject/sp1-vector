@@ -31,11 +31,11 @@ itertools = "0.10.5"
 chrono = "0.4.39"
 
 # sp1
-sp1-sdk = "4.0.0-rc.9"
-sp1-build = "4.0.0-rc.9"
-sp1-zkvm = "4.0.0-rc.9"
+sp1-sdk = { git = "https://github.com/succinctlabs/sp1-wip.git", branch = "n/tee-proofs" }
+sp1-build = { git = "https://github.com/succinctlabs/sp1-wip.git", branch = "n/tee-proofs" }
+sp1-zkvm = { git = "https://github.com/succinctlabs/sp1-wip.git", branch = "n/tee-proofs" }
 
-reqwest = { version = "0.11.20", features = ["json"] }
+reqwest = { version = "0.12.12", features = ["json"] }
 futures = "0.3.30"
 
 aws-config = { version = "1.5.1", features = ["behavior-version-latest"] }

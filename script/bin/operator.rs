@@ -1,5 +1,4 @@
 use std::env;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 
@@ -18,7 +17,7 @@ use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::NetworkProver;
 use sp1_sdk::{
     network::FulfillmentStrategy, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    SP1ProvingKey, SP1Stdin, SP1VerifyingKey, TEEProof,
 };
 
 use tracing::{debug, error, info, instrument};
@@ -206,6 +205,7 @@ where
             .prove(&self.pk, &stdin)
             .strategy(FulfillmentStrategy::Reserved)
             .skip_simulation(true)
+            .tee_proof(TEEProof::NitroIntegrity)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run_async()
@@ -468,6 +468,7 @@ where
             .prove(&self.pk, &stdin)
             .strategy(FulfillmentStrategy::Reserved)
             .skip_simulation(true)
+            .tee_proof(TEEProof::NitroIntegrity)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run_async()

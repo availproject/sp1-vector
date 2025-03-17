@@ -47,7 +47,7 @@ contract DeployScript is BaseScript {
         address guardian = vm.envOr("GUARDIAN_ADDRESS", msg.sender);
 
         ISP1Verifier verifier =
-            ISP1Verifier(vm.envOr("SP1_VERIFIER_ADDRESS", 0x3B6041173B80E77f038f3F2C0f9744f04837185e));
+            ISP1Verifier(vm.envOr("SP1_VERIFIER_ADDRESS", 0xE8a0220b2DE11A60409BCa758188E3f93B81703A));
         SP1Vector sp1VectorImpl = new SP1Vector();
         // ERC1967Proxy proxy = new ERC1967Proxy{salt: vm.envBytes32("CREATE2_SALT")}(address(sp1VectorImpl), "");
         ERC1967Proxy proxy = new ERC1967Proxy(address(sp1VectorImpl), "");
