@@ -96,8 +96,8 @@ export async function getBlockRangeAvail(contractAddress: Uint8Array, ethereumCh
     }
     let ethereumRpc = process.env[`RPC_${ethereumChainId}`] as string;
 
-    // Query in batches of 100_000 blocks.
-    const BATCH_SIZE = 100_000;
+    // Query in batches of 10_000 blocks.
+    const BATCH_SIZE = 10_000;
 
     let chainInfo = getChainInfo(ethereumChainId);
     const client = createPublicClient({

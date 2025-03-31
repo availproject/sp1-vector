@@ -187,8 +187,8 @@ async function getDataCommitmentRangeForBlock(
     });
     let latestBlock = await client.getBlockNumber();
 
-    // Query in batches of 100000 blocks.
-    const BATCH_SIZE = 100_000;
+    // Query in batches of 10000 blocks.
+    const BATCH_SIZE = 10_000;
 
     // TODO: Implement a more efficient search for the first log, based on a heuristic for the ETH
     // block corresponding to an Avail block.
