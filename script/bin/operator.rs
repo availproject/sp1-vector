@@ -1,5 +1,4 @@
 use std::env;
-use std::sync::Arc;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 
