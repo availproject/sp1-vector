@@ -6,7 +6,6 @@ import {SP1Vector} from "../src/SP1Vector.sol";
 import "forge-std/Script.sol";
 
 // Required environment variables:
-// - CHAINS (comma separated list of chain names)
 // - CONTRACT_ADDRESS_{CHAIN_ID}
 
 contract UpdateVkeySingleScript is Script {
