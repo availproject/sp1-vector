@@ -1,9 +1,10 @@
 //! A simple script to test the generation of proofs.
 
+use alloy::sol_types::SolType;
 use clap::Parser;
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
-use sp1_vector_primitives::types::ProofType;
+use sp1_vector_primitives::types::{ProofOutput, ProofType};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 // Requires the following environment variables to be set:
@@ -65,15 +66,12 @@ async fn main() -> anyhow::Result<()> {
 
     let client = ProverClient::from_env();
 
-    let (pk, vk) = client.setup(SP1_VECTOR_ELF);
-    let proof = client.prove(&pk, &stdin).groth16().run()?;
+    let (pv, report) = client.execute(SP1_VECTOR_ELF, &stdin).run()?;
 
-    client.verify(&proof, &vk)?;
+    let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
 
-    // let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
-
-    // println!("Exeuction Report: {:?}", report);
-    // println!("Total instructions: {}", report.total_instruction_count());
+    println!("Exeuction Report: {:?}", report);
+    println!("Total instructions: {}", report.total_instruction_count());
 
     Ok(())
 }

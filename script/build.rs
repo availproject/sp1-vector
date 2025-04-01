@@ -6,7 +6,9 @@ fn main() {
     //     "../program",
     //     BuildArgs {
     //         docker: true,
-    //         elf_name: "vector-elf".to_string(),
+    //         output_directory: Some("../elf".to_string()),
+    //         elf_name: Some("vector-elf".to_string()),
+    //         tag: "v4.1.3".to_string(),
     //         ..Default::default()
     //     },
     // );

@@ -59,8 +59,6 @@ pub struct RotateInputs {
 pub struct HeaderRotateData {
     /// Encoded header bytes for the epoch end block.
     pub header_bytes: Vec<u8>,
-    pub num_authorities: usize,
-    pub pubkeys: Vec<B256>,
     /// Index of the new authority set data in the header bytes.
     pub consensus_log_position: usize,
 }
@@ -98,9 +96,6 @@ pub struct CircuitJustification {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct HeaderRangeInputs {
-    pub trusted_block: u32,
-    pub trusted_header_hash: B256,
-    pub target_block: u32,
     pub merkle_tree_size: usize,
     pub encoded_headers: Vec<Vec<u8>>,
     pub target_justification: CircuitJustification,

@@ -11,3 +11,10 @@ build-dir = "target/book"
 [output.html]
 git-repository-url = "https://github.com/succinctlabs/sp1-vector"
 git-repository-icon = "fa-github"
+additional-js = ["book/mermaid/mermaid.min.js", "book/mermaid/mermaid-init.js"]
+
+[preprocessor.template]
+before = ["links"]
+
+[preprocessor.mermaid]
+command = "mdbook-mermaid"

@@ -6,8 +6,6 @@ use blake2::{
 use codec::{Compact, Decode, Encode};
 use sha2::{Digest as Sha256Digest, Sha256};
 
-use crate::consts::{PUBKEY_LENGTH, VALIDATOR_LENGTH};
-
 pub mod consts;
 pub mod header_range;
 mod justification;
@@ -45,24 +43,6 @@ pub(crate) fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
     let value = Compact::<u64>::decode(&mut bytes.as_slice())
         .expect("Failed to decode SCALE-encoded compact int.");
     (value.into(), value.encoded_size())
-}
-
-/// Verify that the encoded validators match the provided pubkeys, have the correct weight, and the
-/// delay is set to zero starting from the supplied cursor.
-pub fn verify_encoded_validators(header_bytes: &[u8], start_cursor: usize, pubkeys: &Vec<B256>) {
-    let mut cursor = start_cursor;
-    for pubkey in pubkeys {
-        let extracted_pubkey = B256::from_slice(&header_bytes[cursor..cursor + PUBKEY_LENGTH]);
-        // Assert that the extracted pubkey matches the expected pubkey.
-        assert_eq!(extracted_pubkey, *pubkey);
-        let extracted_weight = &header_bytes[cursor + PUBKEY_LENGTH..cursor + VALIDATOR_LENGTH];
-
-        // All validator voting weights in Avail are 1.
-        assert_eq!(extracted_weight, &[1u8, 0, 0, 0, 0, 0, 0, 0]);
-        cursor += VALIDATOR_LENGTH;
-    }
-    // Assert the delay is 0.
-    assert_eq!(&header_bytes[cursor..cursor + 4], &[0u8, 0u8, 0u8, 0u8]);
 }
 
 #[cfg(test)]

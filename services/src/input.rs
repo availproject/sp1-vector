@@ -1,11 +1,10 @@
 use anyhow::Result;
 use avail_subxt::primitives::grandpa::{AuthorityId, ConsensusLog};
+use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
-use sp1_vector_primitives::{
-    compute_authority_set_commitment, consts::HASH_SIZE, verify_encoded_validators,
-};
+use sp1_vector_primitives::{compute_authority_set_commitment, consts::HASH_SIZE};
 use sp_core::H256;
 use std::cmp::Ordering;
 use std::env;
@@ -20,7 +19,6 @@ use avail_subxt::{api, RpcParams};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
 use sp_core::ed25519;
-use subxt::config::Header as SubxtHeader;
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.
@@ -119,13 +117,6 @@ impl RpcDataFetcher {
         header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
-        let trusted_header = self
-            .get_header(header_range_request_data.trusted_block)
-            .await;
-
-        let trusted_header_hash: alloy::primitives::FixedBytes<32> =
-            B256::from_slice(&trusted_header.hash().0);
-
         let num_headers =
             header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
         let merkle_tree_size: usize;
@@ -164,9 +155,6 @@ impl RpcDataFetcher {
             .expect("Failed to get justification data for target block.");
 
         HeaderRangeInputs {
-            trusted_block: header_range_request_data.trusted_block,
-            target_block: header_range_request_data.target_block,
-            trusted_header_hash,
             merkle_tree_size,
             encoded_headers,
             target_justification,
@@ -515,10 +503,7 @@ impl RpcDataFetcher {
         let header_bytes = header.encode();
 
         // Fetch the new authority set specified in the epoch end block.
-        let new_authorities = self.get_authorities(epoch_end_block).await;
-
-        let num_authorities = new_authorities.len();
-        let encoded_num_authorities_len = Compact(num_authorities as u32).encode().len();
+        let expected_new_authorities = self.get_authorities(epoch_end_block).await;
 
         let mut position = 0;
         let number_encoded = Compact(epoch_end_block).encode();
@@ -545,14 +530,6 @@ impl RpcDataFetcher {
                             continue;
                         }
                     }
-
-                    // The bytes after the prefix are the compact encoded number of authorities.
-                    // Follows the encoding format: https://docs.substrate.io/reference/scale-codec/#fn-1
-                    // If the number of authorities is <=63, the compact encoding is 1 byte.
-                    // If the number of authorities is >63 & < 2^14, the compact encoding is 2 bytes.
-                    let cursor = 1 + encoded_num_authorities_len;
-                    verify_encoded_validators(&value, cursor, &new_authorities);
-
                     break;
                 }
             }
@@ -570,10 +547,13 @@ impl RpcDataFetcher {
             );
         }
 
+        let extracted_new_authorities =
+            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes, position);
+
+        assert_eq!(extracted_new_authorities, expected_new_authorities);
+
         HeaderRotateData {
             header_bytes,
-            num_authorities: new_authorities.len(),
-            pubkeys: new_authorities,
             consensus_log_position: position,
         }
     }
@@ -629,7 +609,9 @@ mod tests {
     use avail_subxt::primitives::Header as DaHeader;
     use ed25519::Public;
     use serde::{Deserialize, Serialize};
-    use sp1_vector_primitives::verify_justification;
+    use sp1_vector_primitives::{
+        rotate::get_next_validator_pubkeys_from_epoch_end_header, verify_justification,
+    };
     use std::fs::File;
     use test_case::test_case;
 
@@ -680,13 +662,20 @@ mod tests {
             .await;
         let new_authority_set_id = fetcher.get_authority_set_id(epoch_end_block_number).await;
 
+        let new_authorities = fetcher.get_authorities(epoch_end_block_number).await;
+        let expected_new_authority_set_hash = compute_authority_set_commitment(&new_authorities);
+
         // Verify this is an epoch end block.
         assert_eq!(previous_authority_set_id + 1, new_authority_set_id);
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
         let rotate_data = fetcher.get_header_rotate(new_authority_set_id).await;
-        let new_authority_set_hash = compute_authority_set_commitment(&rotate_data.pubkeys);
-        println!("new authority set hash {:?}", new_authority_set_hash);
+        let new_authority_set_hash =
+            compute_authority_set_commitment(&get_next_validator_pubkeys_from_epoch_end_header(
+                &rotate_data.header_bytes,
+                rotate_data.consensus_log_position,
+            ));
+        assert_eq!(new_authority_set_hash, expected_new_authority_set_hash);
     }
 
     #[test]

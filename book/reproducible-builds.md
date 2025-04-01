@@ -34,7 +34,7 @@ Then build the binaries:
 cd program
 
 # Builds the SP1 Vector binary using the corresponding Docker tag and ELF name.
-cargo prove build --docker --tag v4.0.0-rc.3 --elf-name vector-elf
+cargo prove build --docker --tag v4.1.3 --elf-name vector-elf
 ```
 
 Now, verify the binaries by confirming the output of `vkey` matches the vkeys on the contract. The `vkey` program outputs the verification key

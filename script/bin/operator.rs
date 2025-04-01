@@ -917,7 +917,7 @@ async fn main() {
         .map(|s| s.parse().expect("Failed to parse PRIVATE_KEY"));
 
     if matches!(signer_mode, SignerMode::Local) && maybe_private_key.is_none() {
-        panic!("PRIVATE_KEY must be set if USE_KMS_RELAYER is false");
+        panic!("PRIVATE_KEY must be set if SIGNER_MODE is false");
     }
 
     let config = ChainConfig::fetch().expect("Failed to fetch chain config");

@@ -1,7 +1,7 @@
 use crate::{hash_encoded_header, types::CircuitJustification};
 use codec::Encode;
 use ed25519_consensus::{Signature, VerificationKey};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use alloy_primitives::B256;
 
@@ -58,8 +58,9 @@ pub fn verify_justification(justification: &CircuitJustification) {
         })
         .collect();
 
-    // 2. Get the signer addresses of the accounts with valid precommits for the justification.
-    let signer_addresses: Vec<B256> = justification
+    // 2. Get the signer addresses of the accounts with valid precommits for the justification. Invalidate
+    // precommits from the same signer address with a set.
+    let signer_addresses: HashSet<B256> = justification
         .precommits
         .iter()
         .filter_map(|p| {

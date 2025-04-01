@@ -1,23 +1,23 @@
 // SPDX-License-Identifier: UNLICENSED
-pragma solidity ^0.8.26;
+pragma solidity ^0.8.0;
 
 import {stdJson} from "forge-std/StdJson.sol";
 import {SP1Vector} from "../src/SP1Vector.sol";
-import {BaseScript} from "./Base.s.sol";
+import "forge-std/Script.sol";
 
 // Required environment variables:
 // - CHAINS (comma separated list of chain names)
 // - CONTRACT_ADDRESS_{CHAIN_ID}
 
-contract UpdateVkeyScript is BaseScript {
+contract UpdateVkeySingleScript is Script {
     using stdJson for string;
 
     function setUp() public {}
 
-    string internal constant KEY = "UpdateVkey";
-
     /// Reads CONTRACT_ADDRESS_<CHAIN_ID> from the environment variables and updates the SP1 Verifier and program vkey.
-    function run() external multichain(KEY) broadcaster {
+    function run() external {
+        vm.startBroadcast();
+
         string memory contractAddressKey = string.concat("CONTRACT_ADDRESS_", vm.toString(block.chainid));
         address existingProxyAddress = vm.envAddress(contractAddressKey);
 
@@ -25,5 +25,7 @@ contract UpdateVkeyScript is BaseScript {
 
         // v4 program vkey
         sp1Vector.updateVectorXProgramVkey(0x00e9bba2a9360f570b9ba99e5186825ac723bedebd486b6a818870c44e3e4d4f);
+
+        vm.stopBroadcast();
     }
 }
