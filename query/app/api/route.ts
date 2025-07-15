@@ -44,9 +44,9 @@ async function getBlockNumber(blockHash: string, chainName: string): Promise<num
     const api = await initialize(CHAIN_TO_WS_ENDPOINT.get(chainName.toLowerCase()) as string);
     const rpc: any = api.rpc;
     try {
-        const block = await rpc.chain.getBlock(blockHash);
+        const header: any = await rpc.chain.getHeader(blockHash);
         await disconnect();
-        return block.block.header.number.toNumber();
+        return header.number.toNumber();
     } catch (error) {
         console.log(error);
     }
