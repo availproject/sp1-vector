@@ -15,7 +15,7 @@ sha2 = { version = "0.10.8", default-features = false }
 blake2 = "0.10.6"
 
 # Alloy
-alloy = { version = "0.11.1", features = ["full"] }
+alloy = { version = "0.14", features = ["full"] }
 
 # Common
 anyhow = "1.0.68"
@@ -31,9 +31,9 @@ itertools = "0.10.5"
 chrono = "0.4.39"
 
 # sp1
-sp1-sdk = "4.0.0-rc.9"
-sp1-build = "4.1.3"
-sp1-zkvm = "4.0.0-rc.9"
+sp1-sdk = "=5.0.0"
+sp1-build = "5.0.0"
+sp1-zkvm = "5.0.0"
 
 reqwest = { version = "0.11.20", features = ["json"] }
 futures = "0.3.30"
@@ -66,6 +66,6 @@ sp-io = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polka
 sp-runtime = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
 sp-std = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
 
-sha2-v0-9-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.9.9-sp1-4.0.0-rc.3" }
-sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0-rc.3" }
-curve25519-dalek-ng = { git = "https://github.com/sp1-patches/curve25519-dalek-ng", tag = "patch-4.1.1-sp1-4.0.0-rc.3" }
+sha2-v0-9-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.9.9-sp1-4.0.0" }
+sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
+curve25519-dalek-ng = { git = "https://github.com/sp1-patches/curve25519-dalek-ng", tag = "patch-4.1.1-sp1-5.0.0" }

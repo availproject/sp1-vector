@@ -1,7 +1,7 @@
 use alloy::consensus::BlockHeader;
 use alloy::eips::BlockId;
 use alloy::network::primitives::HeaderResponse;
-use alloy::rpc::types::{BlockTransactionsKind, Filter};
+use alloy::rpc::types::Filter;
 use alloy::sol;
 use alloy::sol_types::SolEvent;
 use alloy::{
@@ -219,9 +219,7 @@ where
     P: Provider<N>,
     N: Network,
 {
-    let latest_block = provider
-        .get_block(BlockId::latest(), BlockTransactionsKind::Hashes)
-        .await?;
+    let latest_block = provider.get_block(BlockId::latest()).await?;
     let Some(latest_block) = latest_block else {
         return Err(anyhow::anyhow!("No latest block found"));
     };
@@ -230,9 +228,7 @@ where
 
     while low <= high {
         let mid = (low + high) / 2;
-        let block = provider
-            .get_block(mid.into(), BlockTransactionsKind::Hashes)
-            .await?;
+        let block = provider.get_block(mid.into()).await?;
         let Some(block) = block else {
             return Err(anyhow::anyhow!("No block found"));
         };
@@ -248,9 +244,7 @@ where
     }
 
     // Return the block hash of the closest block after the target timestamp
-    let block = provider
-        .get_block((low - 10).into(), BlockTransactionsKind::Hashes)
-        .await?;
+    let block = provider.get_block((low - 10).into()).await?;
     let Some(block) = block else {
         return Err(anyhow::anyhow!("No block found"));
     };

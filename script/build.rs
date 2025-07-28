@@ -8,7 +8,7 @@ fn main() {
     //         docker: true,
     //         output_directory: Some("../elf".to_string()),
     //         elf_name: Some("vector-elf".to_string()),
-    //         tag: "v4.1.3".to_string(),
+    //         tag: "v5.0.0".to_string(),
     //         ..Default::default()
     //     },
     // );

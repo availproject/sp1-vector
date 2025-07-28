@@ -80,6 +80,7 @@ export async function queryLogs(
     toBlock: number,
     event: AbiEvent,
 ) {
+    console.log('queryLogs', fromBlock, toBlock);
     if (process.env[`RPC_${ethereumChainId}`] == undefined) {
         throw new Error('Missing RPC URL for chain ' + ethereumChainId);
     }
@@ -173,7 +174,7 @@ export async function getBlocksSinceLastLog(ethereumChainId: number, ethereumRpc
         Number(ethCurrentBlockNumber) - (diffBlocks * 10),
         Number(ethCurrentBlockNumber),
         event,
-        diffBlocks
+        10000
     );
 
     // Sort headUpdateLogs by block number descending.

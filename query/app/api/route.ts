@@ -44,9 +44,9 @@ async function getBlockNumber(blockHash: string, chainName: string): Promise<num
     const api = await initialize(CHAIN_TO_WS_ENDPOINT.get(chainName.toLowerCase()) as string);
     const rpc: any = api.rpc;
     try {
-        const block = await rpc.chain.getBlock(blockHash);
+        const header = await rpc.chain.getHeader(blockHash);
         await disconnect();
-        return block.block.header.number.toNumber();
+        return header.number.toNumber();
     } catch (error) {
         console.log(error);
     }
@@ -370,6 +370,8 @@ export async function GET(req: NextRequest) {
             error: 'Getting the block range covered by the VectorX contract failed!'
         });
     }
+    
+    console.log('Block range: ' + blockRange.start + ' - ' + blockRange.end);
 
     if (requestedBlock < blockRange.start || requestedBlock > blockRange.end) {
         return NextResponse.json({
@@ -387,6 +389,9 @@ export async function GET(req: NextRequest) {
 
         let [requestedBlockHash, dataCommitmentRange] = await Promise.all(promises);
 
+        console.log('Requested block hash: ' + requestedBlockHash);
+        console.log('Data commitment range: ' + dataCommitmentRange);
+
         if (dataCommitmentRange === null) {
             return NextResponse.json({
                 success: false,
@@ -403,6 +408,8 @@ export async function GET(req: NextRequest) {
             endBlockNumber + 1,
             chainName!
         );
+
+        console.log('Got data roots: ' + dataRoots.length);
 
         // Extend the header array to commitmentTreeSize (fill with empty bytes).
         if (dataRoots.length < commitmentTreeSize) {
