@@ -14,10 +14,10 @@ use futures::future::{join_all, try_join_all};
 
 use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::NetworkProver;
+use sp1_sdk::CudaProver;
 use sp1_sdk::{
-    network::FulfillmentStrategy, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    SP1VerifyingKey,
 };
 
 use tracing::{debug, error, info, instrument};
@@ -35,7 +35,8 @@ use config::{ChainConfig, SignerMode};
 ////////////////////////////////////////////////////////////
 
 // If the SP1 proof takes too long to respond, time out.
-const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
+// timeout available only for sp1 network
+// const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
 
 // If the operator takes too long to run, time out.
 const LOOP_TIMEOUT_MINS: u64 = 30;
@@ -81,7 +82,7 @@ struct SP1VectorOperator<P, N> {
     signer_mode: SignerMode,
     tree_size: Option<u32>,
     fetcher: RpcDataFetcher,
-    prover: NetworkProver,
+    prover: CudaProver,
     contracts: HashMap<u64, SP1VectorInstance<P, N>>,
 }
 
@@ -111,7 +112,7 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::builder().network().build();
+        let prover = ProverClient::builder().cuda().build();
         let (pk, vk) = prover.setup(SP1_VECTOR_ELF);
 
         Self {
@@ -200,14 +201,7 @@ where
             }
         }
 
-        self.prover
-            .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
-            .skip_simulation(true)
-            .plonk()
-            .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .run_async()
-            .await
+        self.prover.prove(&self.pk, &stdin).plonk().run()
     }
 
     // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
@@ -453,14 +447,7 @@ where
             }
         }
 
-        self.prover
-            .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
-            .skip_simulation(true)
-            .plonk()
-            .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .run_async()
-            .await
+        self.prover.prove(&self.pk, &stdin).plonk().run()
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
@@ -846,17 +833,13 @@ where
                     }
                 },
                 _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                    continue;
+                    info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
+                    std::process::exit(0);
                 }
             }
 
-            tracing::info!(
-                "Operator ran successfully, sleeping for {} seconds",
-                loop_interval.as_secs()
-            );
-
-            // Sleep for the loop interval.
-            tokio::time::sleep(loop_interval).await;
+            info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
+            std::process::exit(0);
         }
     }
 }
