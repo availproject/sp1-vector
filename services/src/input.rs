@@ -19,6 +19,7 @@ use avail_subxt::{api, RpcParams};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
 use sp_core::ed25519;
+use crate::types::GrandpaJustificationResponse;
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.
@@ -72,16 +73,15 @@ impl RpcDataFetcher {
         );
 
         let response = reqwest::get(request_url).await?;
-        let json_response = response.json::<serde_json::Value>().await?;
-
+        let grandpa_justification_response_data: GrandpaJustificationResponse =
+            response.json::<GrandpaJustificationResponse>().await?;
         // If the service does not have a justification associated with the block, return an error.
         // The response will have the following form:
         // {
         //     "success": false
         //     "error": "No justification found."
         // }
-        let is_success = json_response.get("success").unwrap().as_bool().unwrap();
-        if !is_success {
+        if !grandpa_justification_response_data.success {
             return Err(anyhow::anyhow!(
                 "No justification found for the specified block number."
             ));
@@ -94,20 +94,8 @@ impl RpcDataFetcher {
         //         "S": "<justification as string>"
         //     }
         // }
-        let justification_str = json_response
-            .get("justification")
-            .ok_or_else(|| anyhow::anyhow!("Justification field missing"))
-            .expect("Justification field should be present")
-            .get("S")
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
-            .expect("Justification field should be a string")
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
-            .expect("Justification field should be a string");
-        let justification_data: GrandpaJustification =
-            serde_json::from_str(justification_str).expect("Couldn't deserialize!");
 
-        Ok(justification_data)
+        Ok(grandpa_justification_response_data.justification)
     }
 
     /// Get the inputs for a header range proof. Optionally pass in the header range commitment tree size.
