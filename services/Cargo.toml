@@ -25,9 +25,7 @@ codec = { workspace = true }
 alloy = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
-
-aws-config = { workspace = true }
-aws-sdk-dynamodb = { workspace = true }
+sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "json"] }
 
 [dev-dependencies]
 test-case = "3.3.1"
