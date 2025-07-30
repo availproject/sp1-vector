@@ -61,7 +61,7 @@ jobs:
         run: |
           # Build the binaries
           cd program
-          ~/.sp1/bin/cargo-prove prove build --elf-name vector-elf --docker --tag v4.1.3 --output-directory ../elf
+          ~/.sp1/bin/cargo-prove prove build --elf-name vector-elf --docker --tag v5.0.0 --output-directory ../elf
           cd ../
           # Check for any changes in the elf directory
           if [ -n "$(git status --porcelain elf/)" ]; then

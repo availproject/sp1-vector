@@ -332,7 +332,7 @@ impl RpcDataFetcher {
     /// that validates the next block after the given block number.
     pub async fn compute_authority_set_hash_for_block(&self, block_number: u32) -> B256 {
         let authorities = self.get_authorities(block_number).await;
-        compute_authority_set_commitment(&authorities)
+        compute_authority_set_commitment(authorities.as_slice())
     }
 
     /// Get the justification data necessary for the circuit using GrandpaJustification and the block number.

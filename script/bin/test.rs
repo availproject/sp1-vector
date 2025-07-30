@@ -68,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
 
     let (pv, report) = client.execute(SP1_VECTOR_ELF, &stdin).run()?;
 
-    let _ = ProofOutput::abi_decode(pv.as_slice(), true)?;
+    let _ = ProofOutput::abi_decode(pv.as_slice())?;
 
     println!("Exeuction Report: {:?}", report);
     println!("Total instructions: {}", report.total_instruction_count());

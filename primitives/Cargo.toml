@@ -10,8 +10,8 @@ ed25519-consensus.workspace = true
 codec.workspace = true
 blake2.workspace = true
 itertools.workspace = true
-alloy-primitives = { version = "0.8", features = ["serde"] }
-alloy-sol-types = { version = "0.8" }
+alloy-primitives = { version = "1.0", features = ["serde"] }
+alloy-sol-types = { version = "1.0" }
 
 [dev-dependencies]
 primitive-types = "0.12.2"

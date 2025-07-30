@@ -2,7 +2,7 @@ use std::env;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 
-use alloy::network::{EthereumWallet, ReceiptResponse, TransactionBuilder};
+use alloy::network::{ReceiptResponse, TransactionBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
     network::Network,
@@ -73,7 +73,7 @@ sol! {
     }
 }
 
-type SP1VectorInstance<P, N> = SP1Vector::SP1VectorInstance<(), P, N>;
+type SP1VectorInstance<P, N> = SP1Vector::SP1VectorInstance<P, N>;
 
 struct SP1VectorOperator<P, N> {
     pk: SP1ProvingKey,
@@ -135,8 +135,7 @@ where
             .headerRangeCommitmentTreeSize()
             .call()
             .await
-            .expect("Failed to get tree size")
-            .headerRangeCommitmentTreeSize;
+            .expect("Failed to get tree size");
 
         let chain_id = contract
             .provider()
@@ -288,12 +287,9 @@ where
             .get(&chain_id)
             .expect("No contract for chain id");
 
-        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
-        let header_range_commitment_tree_size = contract
-            .headerRangeCommitmentTreeSize()
-            .call()
-            .await?
-            .headerRangeCommitmentTreeSize;
+        let vectorx_latest_block = contract.latestBlock().call().await?;
+        let header_range_commitment_tree_size =
+            contract.headerRangeCommitmentTreeSize().call().await?;
 
         let avail_current_block = self.fetcher.get_head().await.number;
 
@@ -306,8 +302,7 @@ where
         let next_authority_set_hash = contract
             .authoritySetIdToHash(next_authority_set_id)
             .call()
-            .await?
-            ._0;
+            .await?;
 
         Ok(HeaderRangeContractData {
             vectorx_latest_block,
@@ -410,22 +405,17 @@ where
             .expect("No contract for chain id");
 
         // Fetch the current block from the contract
-        let vectorx_latest_block = contract.latestBlock().call().await?.latestBlock;
+        let vectorx_latest_block = contract.latestBlock().call().await?;
 
         // Fetch the current authority set id from the contract
-        let vectorx_latest_authority_set_id = contract
-            .latestAuthoritySetId()
-            .call()
-            .await?
-            .latestAuthoritySetId;
+        let vectorx_latest_authority_set_id = contract.latestAuthoritySetId().call().await?;
 
         // Check if the next authority set id exists in the contract
         let next_authority_set_id = vectorx_latest_authority_set_id + 1;
         let next_authority_set_hash = contract
             .authoritySetIdToHash(next_authority_set_id)
             .call()
-            .await?
-            ._0;
+            .await?;
         let next_authority_set_hash_exists = next_authority_set_hash != B256::ZERO;
 
         // Return the fetched data
@@ -799,11 +789,7 @@ where
             .get(&chain_id)
             .expect("No contract for chain id");
 
-        let verifying_key = contract
-            .vectorXProgramVkey()
-            .call()
-            .await?
-            .vectorXProgramVkey;
+        let verifying_key = contract.vectorXProgramVkey().call().await?;
 
         if verifying_key.0.to_vec()
             != hex::decode(self.vk.bytes32().strip_prefix("0x").unwrap()).unwrap()
@@ -911,21 +897,21 @@ async fn main() {
     let signer_mode = env::var("SIGNER_MODE")
         .map(|v| v.parse().unwrap())
         .unwrap_or(SignerMode::Local);
-
-    let maybe_private_key: Option<PrivateKeySigner> = env::var("PRIVATE_KEY")
-        .ok()
-        .map(|s| s.parse().expect("Failed to parse PRIVATE_KEY"));
-
-    if matches!(signer_mode, SignerMode::Local) && maybe_private_key.is_none() {
-        panic!("PRIVATE_KEY must be set if signer mode is local");
-    }
-
     let config = ChainConfig::fetch().expect("Failed to fetch chain config");
-    debug!("config: {:?}", config);
 
-    let signer = maybe_signer::MaybeWallet::new(maybe_private_key.map(EthereumWallet::new));
+    match signer_mode {
+        SignerMode::Local => run_with_signer(config).await,
+        SignerMode::Kms => run_with_kms(config).await,
+    }
+}
 
-    let mut operator = SP1VectorOperator::new(signer_mode).await;
+async fn run_with_signer(config: Vec<ChainConfig>) {
+    let mut operator = SP1VectorOperator::new(SignerMode::Local).await;
+
+    let signer: PrivateKeySigner = env::var("PRIVATE_KEY")
+        .expect("PRIVATE_KEY must be set")
+        .parse()
+        .expect("Failed to parse PRIVATE_KEY");
 
     for c in config {
         let provider = ProviderBuilder::new()
@@ -938,63 +924,17 @@ async fn main() {
     operator.run().await
 }
 
-/// Implement a signer that may or may not actually be set.
-///
-/// This is useful to dynamically choose to use the KMS relayer in the operator,
-/// without having to change the actual provider type, since the provider is generic over a signer.
-mod maybe_signer {
-    use alloy::{
-        consensus::{TxEnvelope, TypedTransaction},
-        network::{Network, NetworkWallet},
-        primitives::Address,
-    };
+async fn run_with_kms(config: Vec<ChainConfig>) {
+    let mut operator = SP1VectorOperator::new(SignerMode::Kms).await;
 
-    /// A signer than panics if called and not set.
-    #[derive(Clone, Debug)]
-    pub struct MaybeWallet<W>(Option<W>);
+    for c in config {
+        let provider =
+            ProviderBuilder::new().on_http(c.rpc_url.parse().expect("Failed to parse RPC URL"));
 
-    impl<W> MaybeWallet<W> {
-        pub fn new(signer: Option<W>) -> Self {
-            Self(signer)
-        }
+        operator = operator.with_chain(provider, c.vector_address).await;
     }
 
-    impl<W, N> NetworkWallet<N> for MaybeWallet<W>
-    where
-        W: NetworkWallet<N>,
-        N: Network<UnsignedTx = TypedTransaction, TxEnvelope = TxEnvelope>,
-    {
-        fn default_signer_address(&self) -> Address {
-            self.0
-                .as_ref()
-                .expect("No signer set")
-                .default_signer_address()
-        }
-
-        fn has_signer_for(&self, address: &Address) -> bool {
-            self.0
-                .as_ref()
-                .expect("No signer set")
-                .has_signer_for(address)
-        }
-
-        fn signer_addresses(&self) -> impl Iterator<Item = Address> {
-            self.0.as_ref().expect("No signer set").signer_addresses()
-        }
-
-        #[doc(alias = "sign_tx_from")]
-        async fn sign_transaction_from(
-            &self,
-            sender: Address,
-            tx: TypedTransaction,
-        ) -> alloy::signers::Result<TxEnvelope> {
-            self.0
-                .as_ref()
-                .expect("No signer set")
-                .sign_transaction_from(sender, tx)
-                .await
-        }
-    }
+    operator.run().await
 }
 
 mod config {
