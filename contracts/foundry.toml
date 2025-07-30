@@ -9,8 +9,9 @@ via_ir = true
 fs_permissions = [{ access = "read", path = "./" }]
 
 [profile.deploy]
+via_ir = true
 optimizer = true
-optimizer_runs = 200
+optimizer_runs = 999999
 evm_version = 'cancun'
 
 [rpc_endpoints]
@@ -21,8 +22,13 @@ arbitrum = "${RPC_ARBITRUM}"
 arbitrum_sepolia = "${RPC_ARBITRUM_SEPOLIA}"
 base = "${RPC_BASE}"
 base_sepolia = "${RPC_BASE_SEPOLIA}"
+optimism = "${RPC_OPTIMISM}"
+optimism_sepolia = "${RPC_OPTIMISM_SEPOLIA}"
 scroll = "${RPC_SCROLL}"
 scroll_sepolia = "${RPC_SCROLL_SEPOLIA}"
+gateway_staging = "${RPC_GATEWAY_STAGING}"
+gateway_testnet = "${RPC_GATEWAY_TESTNET}"
+gateway = "${RPC_GATEWAY}"
 
 [etherscan]
 mainnet = { key = "${ETHERSCAN_API_KEY_MAINNET}", url = "${ETHERSCAN_API_URL_MAINNET}" }
@@ -31,6 +37,13 @@ holesky = { key = "${ETHERSCAN_API_KEY_HOLESKY}", url = "${ETHERSCAN_API_URL_HOL
 arbitrum = { key = "${ETHERSCAN_API_KEY_ARBITRUM}", url = "${ETHERSCAN_API_URL_ARBITRUM}" }
 arbitrum_sepolia = { key = "${ETHERSCAN_API_KEY_ARBITRUM_SEPOLIA}", url = "${ETHERSCAN_API_URL_ARBITRUM_SEPOLIA}" }
 base = { key = "${ETHERSCAN_API_KEY_BASE}", url = "${ETHERSCAN_API_URL_BASE}" }
-base_sepolia = { key = "${ETHERSCAN_API_KEY_BASE_SEPOLIA}", url = "${ETHERSCAN_API_URL_BASE_SEPOLIA}", chain = 84532 }
+base_sepolia = { key = "${ETHERSCAN_API_KEY_BASE_SEPOLIA}", url = "${ETHERSCAN_API_URL_BASE_SEPOLIA}" }
+optimism = { key = "${ETHERSCAN_API_KEY_OPTIMISM}", url = "${ETHERSCAN_API_URL_OPTIMISM}" }
+optimism_sepolia = { key = "${ETHERSCAN_API_KEY_OPTIMISM_SEPOLIA}", url = "${ETHERSCAN_API_URL_OPTIMISM_SEPOLIA}" }
 scroll = { key = "${ETHERSCAN_API_KEY_SCROLL}", url = "${ETHERSCAN_API_URL_SCROLL}" }
 scroll_sepolia = { key = "${ETHERSCAN_API_KEY_SCROLL_SEPOLIA}", url = "${ETHERSCAN_API_URL_SCROLL_SEPOLIA}" }
+
+[profile.zksync]
+gateway_staging = { key = "${ETHERSCAN_API_KEY_GATEWAY_STAGING}", url = "${ETHERSCAN_API_URL_GATEWAY_STAGING}" }
+gateway_testnet = { key = "${ETHERSCAN_API_KEY_GATEWAY_TESTNET}", url = "${ETHERSCAN_API_URL_GATEWAY_TESTNET}" }
+gateway = { key = "${ETHERSCAN_API_KEY_GATEWAY}", url = "${ETHERSCAN_API_URL_GATEWAY}" }
