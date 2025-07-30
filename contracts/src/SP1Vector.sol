@@ -164,18 +164,14 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         latestAuthoritySetId = _authoritySetId;
     }
 
-    /// @notice Update the header hash for an existing block height.
-    function updateHeaderHash(uint32 _blockHeight, bytes32 _header) external onlyGuardian {
-        blockHeightToHeaderHash[_blockHeight] = _header;
-
-        emit HeaderHashUpdated(_blockHeight, _header);
+    /// @notice Remove the header hash for an existing block height.
+    function removeHeaderHash(uint32 _blockHeight) external onlyGuardian {
+        delete blockHeightToHeaderHash[_blockHeight];
     }
 
-    /// @notice Update an authority set hash for an existing authority set id.
-    function updateAuthoritySetHash(uint64 _authoritySetId, bytes32 _authoritySetHash) external onlyGuardian {
-        authoritySetIdToHash[_authoritySetId] = _authoritySetHash;
-
-        emit AuthoritySetHashUpdated(_authoritySetId, _authoritySetHash);
+    /// @notice Remove an authority set hash for an existing authority set id.
+    function removeAuthoritySetHash(uint64 _authoritySetId) external onlyGuardian {
+        delete authoritySetIdToHash[_authoritySetId];
     }
 
     /// @notice Force update the data & state commitments for a range of blocks.
