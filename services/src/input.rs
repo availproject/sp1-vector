@@ -18,6 +18,7 @@ use avail_subxt::primitives::Header;
 use avail_subxt::{api, RpcParams};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
+use serde::Deserialize;
 use sp_core::ed25519;
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
@@ -40,6 +41,13 @@ pub struct HeaderRangeRequestData {
     pub is_target_epoch_end_block: bool,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct VectorXQueryResponse {
+    pub success: bool,
+    pub justification: Option<GrandpaJustification>,
+    pub error: Option<String>,
+}
+
 impl RpcDataFetcher {
     pub async fn new() -> Self {
         dotenv::dotenv().ok();
@@ -55,7 +63,7 @@ impl RpcDataFetcher {
         }
     }
 
-    /// Gets a justification from the vectorx-query service, which reads the data from the AWS DB.
+    /// Gets a justification from the vectorx-query service, which reads the data from postgres database.
     pub async fn get_justification(&self, block_number: u32) -> Result<GrandpaJustification> {
         if self.vectorx_query_url.is_none() {
             return Err(anyhow::anyhow!("VECTORX_QUERY_URL must be set"));
@@ -72,42 +80,16 @@ impl RpcDataFetcher {
         );
 
         let response = reqwest::get(request_url).await?;
-        let json_response = response.json::<serde_json::Value>().await?;
+        let json_response = response.json::<VectorXQueryResponse>().await?;
 
-        // If the service does not have a justification associated with the block, return an error.
-        // The response will have the following form:
-        // {
-        //     "success": false
-        //     "error": "No justification found."
-        // }
-        let is_success = json_response.get("success").unwrap().as_bool().unwrap();
+        let is_success = json_response.success;
         if !is_success {
             return Err(anyhow::anyhow!(
                 "No justification found for the specified block number."
             ));
         }
 
-        // If the service does have a justification, it should have the following form:
-        // {
-        //     "success": true,
-        //     "justification": {
-        //         "S": "<justification as string>"
-        //     }
-        // }
-        let justification_str = json_response
-            .get("justification")
-            .ok_or_else(|| anyhow::anyhow!("Justification field missing"))
-            .expect("Justification field should be present")
-            .get("S")
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
-            .expect("Justification field should be a string")
-            .as_str()
-            .ok_or_else(|| anyhow::anyhow!("Justification field should be a string"))
-            .expect("Justification field should be a string");
-        let justification_data: GrandpaJustification =
-            serde_json::from_str(justification_str).expect("Couldn't deserialize!");
-
-        Ok(justification_data)
+        Ok(json_response.justification.unwrap())
     }
 
     /// Get the inputs for a header range proof. Optionally pass in the header range commitment tree size.
