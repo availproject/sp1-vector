@@ -164,6 +164,20 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         latestAuthoritySetId = _authoritySetId;
     }
 
+    /// @notice Update the header hash for an existing block height.
+    function updateHeaderHash(uint32 _blockHeight, bytes32 _header) external onlyGuardian {
+        blockHeightToHeaderHash[_blockHeight] = _header;
+
+        emit HeaderHashUpdated(_blockHeight, _header);
+    }
+
+    /// @notice Update an authority set hash for an existing authority set id.
+    function updateAuthoritySetHash(uint64 _authoritySetId, bytes32 _authoritySetHash) external onlyGuardian {
+        authoritySetIdToHash[_authoritySetId] = _authoritySetHash;
+
+        emit AuthoritySetHashUpdated(_authoritySetId, _authoritySetHash);
+    }
+
     /// @notice Force update the data & state commitments for a range of blocks.
     function updateBlockRangeData(
         uint32[] calldata _startBlocks,
