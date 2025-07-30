@@ -30,14 +30,14 @@ interface ISP1Vector {
         uint32 headerRangeCommitmentTreeSize
     );
 
-    /// @notice Emitted when a header hash is updated.
-    event HeaderHashUpdated(uint32 blockNumber, bytes32 headerHash);
+    /// @notice Emitted when a header hash is removed.
+    event HeaderHashRemoved(uint32 blockNumber);
 
     /// @notice Emitted when a new authority set is stored.
     event AuthoritySetStored(uint64 authoritySetId, bytes32 authoritySetHash);
 
-    /// @notice Emitted when an authority set is updated.
-    event AuthoritySetHashUpdated(uint64 authoritySetId, bytes32 authoritySetHash);
+    /// @notice Emitted when an authority set is removed.
+    event AuthoritySetHashRemoved(uint64 authoritySetId);
 
     /// @notice If the next authority set already exists.
     error NextAuthoritySetExists();
