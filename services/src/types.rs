@@ -33,7 +33,8 @@ pub struct Commit {
 #[derive(Clone, Debug, Decode, Serialize, Deserialize)]
 pub struct GrandpaJustificationResponse {
     pub success: bool,
-    pub justification: GrandpaJustification,
+    pub justification: Option<GrandpaJustification>,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Decode, Serialize, Deserialize)]

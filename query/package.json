@@ -1,6 +1,6 @@
 {
-  "name": "@succinctlabs/vectorx-query",
-  "version": "0.1.0",
+  "name": "@availproject/vectorx-query",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -10,10 +10,11 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@aws-sdk/client-dynamodb": "^3.596.0",
+    "@types/pg": "^8.15.4",
     "abitype": "^1.0.2",
     "avail-js-sdk": "^0.2.12",
     "next": "14.2.3",
+    "pg": "^8.16.3",
     "react": "^18",
     "react-dom": "^18",
     "viem": "^2.13.10"
@@ -26,6 +27,7 @@
     "eslint-config-next": "14.2.3",
     "postcss": "^8",
     "tailwindcss": "^3.4.1",
+    "tsx": "^4.20.3",
     "typescript": "^5"
   }
 }
