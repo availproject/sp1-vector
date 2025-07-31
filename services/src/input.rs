@@ -1,25 +1,24 @@
+use crate::types::GrandpaJustificationResponse;
+use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
+use alloy::primitives::{B256, B512};
 use anyhow::Result;
+use avail_subxt::avail_client::AvailClient;
+use avail_subxt::config::substrate::DigestItem;
 use avail_subxt::primitives::grandpa::{AuthorityId, ConsensusLog};
+use avail_subxt::primitives::Header;
+use avail_subxt::{api, RpcParams};
+use codec::{Compact, Decode, Encode};
+use futures::future::join_all;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
 use sp1_vector_primitives::{compute_authority_set_commitment, consts::HASH_SIZE};
+use sp_core::ed25519;
 use sp_core::H256;
 use std::cmp::Ordering;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
-
-use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
-use alloy::primitives::{B256, B512};
-use avail_subxt::avail_client::AvailClient;
-use avail_subxt::config::substrate::DigestItem;
-use avail_subxt::primitives::Header;
-use avail_subxt::{api, RpcParams};
-use codec::{Compact, Decode, Encode};
-use futures::future::join_all;
-use sp_core::ed25519;
-use crate::types::GrandpaJustificationResponse;
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.
@@ -75,27 +74,18 @@ impl RpcDataFetcher {
         let response = reqwest::get(request_url).await?;
         let grandpa_justification_response_data: GrandpaJustificationResponse =
             response.json::<GrandpaJustificationResponse>().await?;
-        // If the service does not have a justification associated with the block, return an error.
-        // The response will have the following form:
-        // {
-        //     "success": false
-        //     "error": "No justification found."
-        // }
+
         if !grandpa_justification_response_data.success {
+            println!(
+                "Error while querying justification for block {:?}: {:?}",
+                block_number, grandpa_justification_response_data.error
+            );
             return Err(anyhow::anyhow!(
                 "No justification found for the specified block number."
             ));
         }
 
-        // If the service does have a justification, it should have the following form:
-        // {
-        //     "success": true,
-        //     "justification": {
-        //         "S": "<justification as string>"
-        //     }
-        // }
-
-        Ok(grandpa_justification_response_data.justification)
+        Ok(grandpa_justification_response_data.justification.unwrap())
     }
 
     /// Get the inputs for a header range proof. Optionally pass in the header range commitment tree size.
