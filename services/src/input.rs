@@ -10,6 +10,7 @@ use std::cmp::Ordering;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
 
+use crate::types::GrandpaJustificationResponse;
 use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
 use alloy::primitives::{B256, B512};
 use avail_subxt::avail_client::AvailClient;
@@ -19,7 +20,6 @@ use avail_subxt::{api, RpcParams};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
 use sp_core::ed25519;
-use crate::types::GrandpaJustificationResponse;
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.

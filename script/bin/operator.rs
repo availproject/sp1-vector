@@ -1,7 +1,3 @@
-use std::env;
-use std::time::Duration;
-use std::{cmp::min, collections::HashMap};
-use std::str::FromStr;
 use alloy::network::{ReceiptResponse, TransactionBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
@@ -11,6 +7,10 @@ use alloy::{
     sol,
 };
 use futures::future::{join_all, try_join_all};
+use std::env;
+use std::str::FromStr;
+use std::time::Duration;
+use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
@@ -20,14 +20,14 @@ use sp1_sdk::{
     SP1VerifyingKey,
 };
 
-use tracing::{debug, error, info, instrument};
-use tracing::metadata::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
+use tracing::metadata::LevelFilter;
+use tracing::{debug, error, info, instrument};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use config::{ChainConfig, SignerMode};
 
@@ -821,27 +821,21 @@ where
     // Run the operator, indefinitely.
     async fn run(self) {
         let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        let error_interval = Duration::from_secs(10);
+        // let error_interval = Duration::from_secs(10);
 
-        loop {
-            tokio::select! {
-                res = self.run_once() => {
-                    if let Err(e) = res {
-                        error!("Error during `run_once`: {:?}", e);
-                        // Sleep for less time if theres an error.
-                        tokio::time::sleep(error_interval).await;
-                        continue;
-                    }
-                },
-                _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                    info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
-                    std::process::exit(0);
+        tokio::select! {
+            res = self.run_once() => {
+                if let Err(e) = res {
+                    error!("Error during `run_once`: {:?}", e);
+                    return;
                 }
+            },
+            _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
+                info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
             }
-
-            info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
-            std::process::exit(0);
         }
+
+        info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
     }
 }
 
