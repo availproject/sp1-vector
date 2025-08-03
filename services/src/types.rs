@@ -3,13 +3,6 @@ use avail_subxt::{AvailHeader, StorageValue, H256};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
-pub struct CurrentSetId;
-impl StorageValue for CurrentSetId {
-    const PALLET_NAME: &str = "Grandpa";
-    const STORAGE_NAME: &str = "CurrentSetId";
-    type VALUE = u64;
-}
-
 #[derive(Debug, Encode)]
 pub enum SignerMessage {
     #[allow(dead_code)]

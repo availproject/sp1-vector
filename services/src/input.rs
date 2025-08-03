@@ -214,7 +214,7 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_block_hash(&self, block_number: u32) -> B256 {
-        let block_hash = self.client.block_hash(block_number).await;
+        let block_hash = self.client.block_hash_ext(block_number, true, false).await;
 
         B256::from(block_hash.unwrap().unwrap().0)
     }
@@ -259,16 +259,17 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_head(&self) -> AvailHeader {
-        let head_block_hash = self.client.finalized_block_hash().await.unwrap();
+        let head_block_hash = self.client.finalized_block_hash_ext(true).await.unwrap();
         let header = self.client.block_header(head_block_hash).await;
         header.unwrap().unwrap()
     }
 
     pub async fn get_authority_set_id(&self, block_number: u32) -> u64 {
+        use avail_subxt::avail::grandpa::storage::CurrentSetId;
         let block_hash = self.get_block_hash(block_number).await;
 
         let at = Some(H256::from(block_hash.0));
-        let set_id = crate::types::CurrentSetId::fetch(&self.client.rpc_client, at)
+        let set_id = CurrentSetId::fetch(&self.client.rpc_client, at)
             .await
             .unwrap()
             .unwrap();
@@ -368,23 +369,24 @@ impl RpcDataFetcher {
     /// Get the latest justification data. Because Avail does not store the justification data for
     /// all blocks, we can only generate a proof using the latest justification data or the justification data for a specific block.
     pub async fn get_latest_justification_data(&self) -> (CircuitJustification, AvailHeader) {
-        let Ok(block_height) = self.client.finalized_block_height().await else {
+        let Ok(block_height) = self.client.finalized_block_height_ext(true, false).await else {
             panic!("Failed to fetch finalized block height")
         };
 
         let mut sub = self
             .client
-            .subscription_grandpa_justifications(block_height, Duration::from_millis(5000));
+            .subscription_grandpa_justifications(block_height, Duration::from_secs(5));
 
         let Ok((justification, justification_height)) = sub.next().await else {
-            panic!("")
+            panic!("Failed to fetch next justification")
         };
 
         let Ok(Some(block_hash)) = self.client.block_hash(justification_height).await else {
             panic!("Failed to fetch block hash")
         };
 
-        let Ok(Some(block_header)) = self.client.block_header(block_hash).await else {
+        let Ok(Some(block_header)) = self.client.block_header_ext(block_hash, true, false).await
+        else {
             panic!("Failed to fetch block header")
         };
 
