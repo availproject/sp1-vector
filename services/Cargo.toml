@@ -19,12 +19,11 @@ reqwest = { workspace = true }
 
 dotenv = { workspace = true }
 avail-subxt = { workspace = true }
-subxt = { workspace = true }
-sp-core = { workspace = true }
 codec = { workspace = true }
 alloy = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
+tracing-subscriber = { workspace = true }
 
 aws-config = { workspace = true }
 aws-sdk-dynamodb = { workspace = true }
