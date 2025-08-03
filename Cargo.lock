@@ -1221,7 +1221,8 @@ checksum = "0c4b4d0bd25bd0b74681c0ad21497610ce1b7c91b1022cd21c80c6fbdd9476b0"
 [[package]]
 name = "avail-rust-client"
 version = "0.2.13"
-source = "git+https://github.com/availproject/avail-rust?branch=main#9b8a7802a40312245d647838e5b05b6b1a51840d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8253fb28b39884bdc463fc549e78e4c1c909e36e3fe30e6392a1df0d4e9dfabe"
 dependencies = [
  "avail-rust-core",
  "const-hex",
@@ -1240,7 +1241,8 @@ dependencies = [
 [[package]]
 name = "avail-rust-core"
 version = "0.2.13"
-source = "git+https://github.com/availproject/avail-rust?branch=main#9b8a7802a40312245d647838e5b05b6b1a51840d"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "06ff657aca21bb1080c81de2e2b97e430b311c3c786da3ee09dc15360c4c31a4"
 dependencies = [
  "const-hex",
  "impl-serde",

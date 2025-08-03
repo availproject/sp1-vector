@@ -1,5 +1,5 @@
 use avail_subxt::avail_rust_core::grandpa::Precommit;
-use avail_subxt::{AvailHeader, StorageValue, H256};
+use avail_subxt::{AvailHeader, H256};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
