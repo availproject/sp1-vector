@@ -833,31 +833,21 @@ where
     // Run the operator, indefinitely.
     async fn run(self) {
         let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        let error_interval = Duration::from_secs(10);
+        // let error_interval = Duration::from_secs(10);
 
-        loop {
-            tokio::select! {
-                res = self.run_once() => {
-                    if let Err(e) = res {
-                        error!("Error during `run_once`: {:?}", e);
-                        // Sleep for less time if theres an error.
-                        tokio::time::sleep(error_interval).await;
-                        continue;
-                    }
-                },
-                _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                    continue;
+        tokio::select! {
+            res = self.run_once() => {
+                if let Err(e) = res {
+                    error!("Error during `run_once`: {:?}", e);
+                    return;
                 }
+            },
+            _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
+                info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
             }
-
-            tracing::info!(
-                "Operator ran successfully, sleeping for {} seconds",
-                loop_interval.as_secs()
-            );
-
-            // Sleep for the loop interval.
-            tokio::time::sleep(loop_interval).await;
         }
+
+        info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
     }
 }
 
