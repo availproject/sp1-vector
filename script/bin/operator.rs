@@ -1,7 +1,7 @@
 use std::env;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
-
+use std::str::FromStr;
 use alloy::network::{ReceiptResponse, TransactionBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
@@ -21,8 +21,9 @@ use sp1_sdk::{
 };
 
 use tracing::{debug, error, info, instrument};
-use tracing_subscriber::EnvFilter;
-
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
@@ -876,12 +877,19 @@ fn get_block_update_interval() -> u32 {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> anyhow::Result<()> {
     dotenv::dotenv().ok();
-    tracing_subscriber::fmt::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from_env("info")),
+    let log_level = env::var("LOG_LEVEL").unwrap_or("info".to_string());
+
+    let _ = tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_current_span(true)
+                .with_line_number(true)
+                .with_target(true),
         )
+        .with(LevelFilter::from_str(&log_level)?)
         .init();
 
     let signer_mode = env::var("SIGNER_MODE")
@@ -892,7 +900,9 @@ async fn main() {
     match signer_mode {
         SignerMode::Local => run_with_signer(config).await,
         SignerMode::Kms => run_with_kms(config).await,
-    }
+    };
+
+    Ok(())
 }
 
 async fn run_with_signer(config: Vec<ChainConfig>) {
