@@ -3,8 +3,8 @@ use avail_subxt::RpcParams;
 use codec::Decode;
 use serde::de::Error;
 use serde::Deserialize;
-use services::aws::AWSClient;
 use services::input::RpcDataFetcher;
+use services::postgres::PostgresClient;
 use services::types::{Commit, GrandpaJustification};
 use sp_core::bytes;
 use subxt::backend::rpc::RpcSubscription;
@@ -47,7 +47,7 @@ impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
 /// exit so the outer loop can re-initialize it.
 async fn handle_subscription(
     sub: &mut RpcSubscription<AvailSubscriptionGrandpaJustification>,
-    aws_client: &AWSClient,
+    postgres_client: &PostgresClient,
     fetcher: &RpcDataFetcher,
     timeout_duration: std::time::Duration,
 ) {
@@ -58,11 +58,11 @@ async fn handle_subscription(
                     "New justification from block {}",
                     justification.commit.target_number
                 );
-                if let Err(e) = aws_client
+                if let Err(e) = postgres_client
                     .add_justification(&fetcher.avail_chain_id, justification.into())
                     .await
                 {
-                    error!("Error adding justification to AWS: {:?}", e);
+                    error!("Error adding justification to PostgreSQL: {:?}", e);
                 }
             }
             Ok(None) => {
@@ -112,16 +112,19 @@ async fn listen_for_justifications() {
             continue;
         };
 
-        // Initialize the AWS client.
-        let Ok(aws_client) = AWSClient::new().timeout(timeout_duration).await else {
-            error!("Failed to initialize AWS client after timeout");
-            continue;
+        // Initialize the PostgreSQL client.
+        let postgres_client = match PostgresClient::new().await {
+            Ok(client) => client,
+            Err(_) => {
+                error!("Failed to initialize PostgreSQL client");
+                continue;
+            }
         };
 
         match initialize_subscription(&fetcher).await {
             Ok(mut sub) => {
                 debug!("Subscription initialized successfully");
-                handle_subscription(&mut sub, &aws_client, &fetcher, timeout_duration).await;
+                handle_subscription(&mut sub, &postgres_client, &fetcher, timeout_duration).await;
             }
             Err(e) => {
                 debug!("Failed to initialize subscription: {:?}", e);
