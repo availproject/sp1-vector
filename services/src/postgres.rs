@@ -1,5 +1,5 @@
 use anyhow::Result;
-use serde_json::{from_str, to_string};
+use serde_json::{from_str, to_value};
 use sqlx::{PgPool, Row};
 use tracing::info;
 
@@ -27,7 +27,7 @@ impl PostgresClient {
         avail_chain_id: &str,
         justification: GrandpaJustification,
     ) -> Result<()> {
-        let json_data = to_string(&justification)?;
+        let json_data = to_value(&justification)?;
         let block_nb = justification.commit.target_number;
         let id = format!("{}-{}", avail_chain_id, block_nb).to_lowercase();
 
