@@ -9,11 +9,17 @@ pub enum DatabaseClient {
 
 impl DatabaseClient {
     pub async fn new() -> anyhow::Result<Self> {
+        if (std::env::var("DEBUG").is_ok() || std::env::var("DATABASE_INMEMORY").is_ok())
+            && std::env::var("DATABASE_URL").is_err()
+        {
+            return Self::new_in_memory();
+        }
+
         let pg = PostgresClient::new().await?;
         Ok(Self::Postgres(pg))
     }
 
-    pub async fn new_in_memory() -> anyhow::Result<Self> {
+    pub fn new_in_memory() -> anyhow::Result<Self> {
         let c = InMemoryClient::new();
         Ok(Self::InMemory(c))
     }
@@ -138,7 +144,6 @@ pub struct PostgresClient {
 impl PostgresClient {
     pub async fn new() -> anyhow::Result<Self> {
         let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
-
         let pool = PgPool::connect(&database_url).await?;
 
         // Test the connection

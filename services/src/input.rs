@@ -45,6 +45,19 @@ impl RpcDataFetcher {
     pub async fn new() -> Self {
         dotenv::dotenv().ok();
 
+        if std::env::var("DEBUG").is_ok() {
+            let url = env::var("AVAIL_URL").unwrap_or_else(|_| "http://localhost:9944".to_owned());
+            let client = AvailClient::new(url.as_str()).await.unwrap();
+            let avail_chain_id =
+                env::var("AVAIL_CHAIN_ID").unwrap_or_else(|_| "avail_c".to_owned());
+            let vectorx_query_url = env::var("VECTORX_QUERY_URL").ok();
+            return RpcDataFetcher {
+                client,
+                avail_chain_id,
+                vectorx_query_url,
+            };
+        }
+
         let url = env::var("AVAIL_URL").expect("AVAIL_URL must be set");
         let client = AvailClient::new(url.as_str()).await.unwrap();
         let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
