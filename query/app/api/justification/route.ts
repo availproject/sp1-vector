@@ -1,7 +1,5 @@
-import { DynamoDBClient, QueryCommand } from '@aws-sdk/client-dynamodb';
 import { NextRequest, NextResponse } from 'next/server';
-
-const tableName = 'justifications-v2';
+import { getJustification } from '@/app/utils/database';
 
 /** Get the justification for a given Avail block.
  * - blockNumber: The block number of the Avail block.
@@ -9,8 +7,6 @@ const tableName = 'justifications-v2';
  */
 export async function GET(req: NextRequest) {
     const url = new URL(req.url);
-
-    let dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 
     const blockNumber = Number(url.searchParams.get('blockNumber'));
     const availChainId = url.searchParams.get('availChainId');
@@ -22,31 +18,30 @@ export async function GET(req: NextRequest) {
 
     if (blockNumber === undefined || availChainId === undefined) {
         return NextResponse.json({
-            success: false
+            success: false,
+            error: 'Missing required parameters: blockNumber and availChainId'
         });
     }
 
-    let justificationKey = (availChainId! + '-' + blockNumber.toString()).toLowerCase();
+    try {
+        const justification = await getJustification(availChainId!, blockNumber);
 
-    const command = new QueryCommand({
-        TableName: tableName,
-        KeyConditionExpression: 'id = :id',
-        ExpressionAttributeValues: {
-            ':id': { S: justificationKey },
-        },
-    });
+        if (!justification) {
+            return NextResponse.json({
+                success: false,
+                error: 'No justification found'
+            });
+        }
 
-    const response = await dynamoClient.send(command);
-
-    if (response.Items === undefined || response.Items.length === 0) {
+        return NextResponse.json({
+            success: true,
+            justification: justification.data
+        });
+    } catch (error) {
+        console.error('Database error:', error);
         return NextResponse.json({
             success: false,
-            error: 'No justification found'
+            error: 'Database error occurred'
         });
     }
-
-    return NextResponse.json({
-        success: true,
-        justification: response.Items![0].data
-    });
 }
