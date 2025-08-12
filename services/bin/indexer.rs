@@ -121,6 +121,9 @@ pub async fn main() {
         .await
         .unwrap()
         .unwrap_or_default();
+    if next_block_height > 0 {
+        next_block_height += 1;
+    }
     let mut rx = spawn_task(data_fetcher.client.clone(), next_block_height).await;
 
     loop {
