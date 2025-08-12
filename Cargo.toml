@@ -4,9 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 # Avail
-avail-subxt = { git = "https://github.com/availproject/avail.git", tag = "v2.2.5.1" }
-sp-core = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10", default-features = false }
-subxt = "0.34"
+avail-subxt = { package = "avail-rust-client", version = "0.2.14", default-features = false, features = ["native", "reqwest"] }
 codec = { package = "parity-scale-codec", version = "3", default-features = false }
 
 # Cryptography
@@ -36,7 +34,7 @@ sp1-build = "5.0.0"
 sp1-zkvm = "5.0.0"
 
 reqwest = { version = "0.11.20", features = ["json"] }
-futures = "0.3.30"
+futures = "0.3.31"
 
 sp1-vectorx-script = { path = "script" }
 sp1-vectorx-program = { path = "program" }
@@ -58,11 +56,6 @@ opt-level = 0
 debug = true
 
 [patch.crates-io]
-sp-core = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
-sp-io = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
-sp-runtime = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
-sp-std = { git = "https://github.com/availproject/polkadot-sdk.git", tag = "polkadot-1.7.1-patch-10" }
-
 sha2-v0-9-9 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.9.9-sp1-4.0.0" }
 sha2-v0-10-8 = { git = "https://github.com/sp1-patches/RustCrypto-hashes", package = "sha2", tag = "patch-sha2-0.10.8-sp1-4.0.0" }
 curve25519-dalek-ng = { git = "https://github.com/sp1-patches/curve25519-dalek-ng", tag = "patch-4.1.1-sp1-5.0.0" }

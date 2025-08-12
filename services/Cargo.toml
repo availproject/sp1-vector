@@ -18,13 +18,12 @@ tokio = { workspace = true }
 reqwest = { workspace = true }
 
 dotenv = { workspace = true }
-avail-subxt = { workspace = true }
-subxt = { workspace = true }
-sp-core = { workspace = true }
 codec = { workspace = true }
 alloy = { workspace = true }
 anyhow = { workspace = true }
 futures = { workspace = true }
+tracing-subscriber = { workspace = true }
+avail-subxt = { workspace = true }
 
 sqlx = { version = "0.7", features = ["runtime-tokio-rustls", "postgres", "chrono", "json"] }
 

@@ -2,7 +2,6 @@
 //!
 //!     `cargo build --release --bin genesis`
 //!
-use avail_subxt::config::Header;
 use clap::Parser;
 use services::input::RpcDataFetcher;
 use sp1_sdk::{HashableKey, Prover, ProverClient};
