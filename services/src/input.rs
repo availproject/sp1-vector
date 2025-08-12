@@ -84,7 +84,8 @@ impl RpcDataFetcher {
                 "No justification found for the specified block number."
             ));
         }
-
+        // justification must exits if the success is true
+        // todo better design
         Ok(grandpa_justification_response_data.justification.unwrap())
     }
 

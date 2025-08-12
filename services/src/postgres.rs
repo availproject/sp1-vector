@@ -118,9 +118,8 @@ impl PostgresClient {
 mod tests {
     use super::*;
     use crate::types::{Commit, GrandpaJustification, Precommit, SignedPrecommit};
-    use avail_subxt::primitives::Header;
     use sp_core::ed25519::{Public, Signature};
-    use sp_core::H256;
+    use sp_core::{ByteArray, H256};
 
     #[tokio::test]
     #[ignore] // This test requires a PostgreSQL database
