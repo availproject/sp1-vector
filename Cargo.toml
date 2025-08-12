@@ -45,7 +45,7 @@ sp1-vector-primitives = { path = "primitives" }
 
 # logging
 tracing = "0.1.41"
-tracing-subscriber = { version = "0.3", features = ["json"]}
+tracing-subscriber = { version = "0.3.19", features = ["json"] }
 
 
 [profile.release]

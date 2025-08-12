@@ -1,3 +1,7 @@
+use std::env;
+use std::time::Duration;
+use std::{cmp::min, collections::HashMap};
+use std::str::FromStr;
 use alloy::network::{ReceiptResponse, TransactionBuilder};
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
@@ -14,12 +18,16 @@ use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::{EnvProver};
+use sp1_sdk::NetworkProver;
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
-    SP1VerifyingKey,
+    network::FulfillmentStrategy, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
+    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
+use tracing::{debug, error, info, instrument};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
