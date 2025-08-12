@@ -153,7 +153,7 @@ impl PostgresClient {
         avail_chain_id: &str,
         justification: &GrandpaJustification,
     ) -> anyhow::Result<()> {
-        let json_data = serde_json::to_string(justification)?;
+        let json_data = serde_json::to_value(justification)?;
         let block_nb = justification.commit.target_number;
         let id = format!("{avail_chain_id}-{block_nb}").to_lowercase();
 

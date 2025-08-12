@@ -10,7 +10,7 @@ use tracing_subscriber::util::SubscriberInitExt;
 
 #[derive(Debug)]
 pub enum ChannelMessage {
-    Justification((GrandpaJustification, u32)),
+    Justification(GrandpaJustification),
     Error(ClientError),
 }
 
@@ -30,7 +30,7 @@ async fn task_fetch_justifications(
             }
         };
         let res = channel
-            .send(ChannelMessage::Justification((justification, block_height)))
+            .send(ChannelMessage::Justification(justification))
             .await;
 
         // If the other side is closed then there is nothing to do so we just exit
@@ -57,12 +57,12 @@ async fn spawn_task(client: AvailClient, block_height: u32) -> Receiver<ChannelM
     _ = tokio::spawn(async move { task_fetch_justifications(client, block_height, tx).await });
     info!("Spawned Justification Task. Block Height: {}", block_height);
 
-    return rx;
+    rx
 }
 
 async fn retrieve_justifications(
     rx: &mut Receiver<ChannelMessage>,
-) -> Result<(GrandpaJustification, u32), ()> {
+) -> Result<GrandpaJustification, ()> {
     loop {
         let maybe_message = rx.try_recv();
         let message = match maybe_message {
@@ -77,7 +77,7 @@ async fn retrieve_justifications(
             }
         };
 
-        let justification: (GrandpaJustification, u32) = match message {
+        let justification: GrandpaJustification = match message {
             ChannelMessage::Justification(x) => x,
             ChannelMessage::Error(err) => {
                 warn!("Justification Task Error: {:?}", err);
@@ -94,12 +94,15 @@ async fn send_justifications(chain_id: &str, justification: &GrandpaJustificatio
         //TODO
         let mut client = DatabaseClient::new().await.unwrap();
         let result = client.add_justification(chain_id, justification).await;
-        if result.is_ok() {
-            break;
+        match result {
+            Ok(_) => return,
+            Err(err) => {
+                warn!("Error: {}", err.to_string());
+            }
         }
 
         // AWS client failed to send our justification. We don't know why so we will wait 20s and retry it.
-        warn!("Postgres client failed to store our justification. Waiting 20 seconds and trying again.");
+        warn!("Database client failed to store our justification. Waiting 20 seconds and trying again.");
         tokio::time::sleep(Duration::from_secs(20)).await;
     }
 }
@@ -110,13 +113,18 @@ pub async fn main() {
     let tracing_builder = tracing_subscriber::fmt::SubscriberBuilder::default();
     tracing_builder.finish().init();
 
+    let client = DatabaseClient::new().await.unwrap();
     let data_fetcher = RpcDataFetcher::new().await;
     let chain_id = &data_fetcher.avail_chain_id;
-    let mut next_block_height = fetch_block_height(&data_fetcher.client).await;
+    let mut next_block_height = client
+        .get_latest_block_number(chain_id)
+        .await
+        .unwrap()
+        .unwrap_or_default();
     let mut rx = spawn_task(data_fetcher.client.clone(), next_block_height).await;
 
     loop {
-        let Ok((justification, block_height)) = retrieve_justifications(&mut rx).await else {
+        let Ok(justification) = retrieve_justifications(&mut rx).await else {
             // We failed to retrieve justification. This most likely happened because we failed to communicate
             // with a node.
             warn!("Failed to retrieve justification. Waiting 20 seconds before restarting everything.");
@@ -126,13 +134,16 @@ pub async fn main() {
             continue;
         };
 
-        info!("Receive Justification. Block Height: {}", block_height);
+        info!(
+            "Receive Justification. Block Height: {}",
+            justification.commit.target_number
+        );
         send_justifications(chain_id, &justification).await;
         info!(
-            "Successfully added Justification to AWS. Block Height {}",
-            block_height
+            "Successfully added Justification to Database. Block Height {}",
+            justification.commit.target_number
         );
 
-        next_block_height = block_height + 1
+        next_block_height = justification.commit.target_number + 1
     }
 }
