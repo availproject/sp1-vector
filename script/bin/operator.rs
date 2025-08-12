@@ -14,9 +14,9 @@ use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::CudaProver;
+use sp1_sdk::{EnvProver};
 use sp1_sdk::{
-    HashableKey, Prover, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
+    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin,
     SP1VerifyingKey,
 };
 
@@ -83,7 +83,7 @@ struct SP1VectorOperator<P, N> {
     signer_mode: SignerMode,
     tree_size: Option<u32>,
     fetcher: RpcDataFetcher,
-    prover: CudaProver,
+    prover: EnvProver,
     contracts: HashMap<u64, SP1VectorInstance<P, N>>,
 }
 
@@ -113,7 +113,7 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::builder().cuda().build();
+        let prover = ProverClient::from_env();
         let (pk, vk) = prover.setup(SP1_VECTOR_ELF);
 
         Self {
