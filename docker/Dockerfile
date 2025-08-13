@@ -4,7 +4,7 @@ COPY . .
 ARG BUILD_PROFILE=release
 ARG BIN_MODE=indexer
 
-RUN apt update && apt install -y git make libssl-dev pkg-config libpq-dev \
+RUN apt update && apt install -y git make libssl-dev pkg-config libpq-dev build-essential \
     && cargo build --profile $BUILD_PROFILE --bin $BIN_MODE --locked \
     && cp /build/target/$BUILD_PROFILE/$BIN_MODE /build/vectorx-$BIN_MODE
 
