@@ -4,7 +4,7 @@ resolver = "2"
 
 [workspace.dependencies]
 # Avail
-avail-subxt = { package = "avail-rust-client", version = "0.2.14", default-features = false, features = ["native", "reqwest"] }
+avail-subxt = { package = "avail-rust-client", version = "0.2.15", default-features = false, features = ["native", "reqwest"] }
 codec = { package = "parity-scale-codec", version = "3", default-features = false }
 
 # Cryptography
