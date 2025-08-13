@@ -98,6 +98,6 @@ pub fn verify_justification(justification: &CircuitJustification) {
     // 4. Confirm that the supermajority of the validator set is achieved.
     assert!(
         is_signed_by_supermajority(num_matched_addresses, justification.valset_pubkeys.len()),
-        "More than 2/3 of signatures are not verifie!"
+        "More than 2/3 of signatures are not verified!"
     );
 }
