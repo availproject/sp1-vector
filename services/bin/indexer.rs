@@ -1,145 +1,147 @@
-use avail_subxt::primitives::Header;
-use avail_subxt::RpcParams;
-use codec::Decode;
-use serde::de::Error;
-use serde::Deserialize;
+use avail_subxt::{
+    avail_rust_core::grandpa::GrandpaJustification, Client as AvailClient, ClientError,
+};
 use services::input::RpcDataFetcher;
-use services::postgres::PostgresClient;
-use services::types::{Commit, GrandpaJustification};
-use sp_core::bytes;
-use subxt::backend::rpc::RpcSubscription;
-use tracing::{debug, error, info};
+use services::postgres::DatabaseClient;
+use std::time::Duration;
+use tokio::sync::mpsc::{self, Receiver, Sender};
+use tracing::{info, warn};
+use tracing_subscriber::util::SubscriberInitExt;
 
-use services::Timeout;
-
-/// The justification type that the Avail Subxt client returns for justifications. Needs a custom
-/// deserializer, so we can't use the equivalent `GrandpaJustification` type.
-#[derive(Clone, Debug, Decode)]
-pub struct AvailSubscriptionGrandpaJustification {
-    pub round: u64,
-    pub commit: Commit,
-    #[allow(dead_code)]
-    pub votes_ancestries: Vec<Header>,
+#[derive(Debug)]
+pub enum ChannelMessage {
+    Justification(GrandpaJustification),
+    Error(ClientError),
 }
 
-impl From<AvailSubscriptionGrandpaJustification> for GrandpaJustification {
-    fn from(justification: AvailSubscriptionGrandpaJustification) -> GrandpaJustification {
-        GrandpaJustification {
-            round: justification.round,
-            commit: justification.commit,
-            votes_ancestries: justification.votes_ancestries,
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for AvailSubscriptionGrandpaJustification {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let encoded = bytes::deserialize(deserializer)?;
-        Self::decode(&mut &encoded[..])
-            .map_err(|codec_err| D::Error::custom(format!("Invalid decoding: {:?}", codec_err)))
-    }
-}
-
-/// When the subscription yields events, add them to the indexer DB. If the subscription fails,
-/// exit so the outer loop can re-initialize it.
-async fn handle_subscription(
-    sub: &mut RpcSubscription<AvailSubscriptionGrandpaJustification>,
-    postgres_client: &PostgresClient,
-    fetcher: &RpcDataFetcher,
-    timeout_duration: std::time::Duration,
+async fn task_fetch_justifications(
+    client: AvailClient,
+    block_height: u32,
+    channel: Sender<ChannelMessage>,
 ) {
+    let mut sub = client.subscription_grandpa_justification(block_height, Duration::from_secs(10));
     loop {
-        match sub.next().timeout(timeout_duration).await {
-            Ok(Some(Ok(justification))) => {
-                debug!(
-                    "New justification from block {}",
-                    justification.commit.target_number
-                );
-                if let Err(e) = postgres_client
-                    .add_justification(&fetcher.avail_chain_id, justification.into())
-                    .await
-                {
-                    error!("Error adding justification to PostgreSQL: {:?}", e);
-                }
-            }
-            Ok(None) => {
-                error!("Subscription ended unexpectedly");
+        let result = sub.next().await;
+        let justification = match result {
+            Ok(x) => x,
+            Err(err) => {
+                _ = channel.send(ChannelMessage::Error(err.into())).await;
                 return;
             }
-            Ok(Some(Err(e))) => {
-                error!("Error in subscription: {:?}", e);
-                return;
-            }
-            Err(_) => {
-                error!("Timeout reached. No event received in the last minute.");
-                return;
-            }
+        };
+        let res = channel
+            .send(ChannelMessage::Justification(justification))
+            .await;
+
+        // If the other side is closed then there is nothing to do so we just exit
+        if res.is_err() {
+            return;
         }
     }
 }
 
-/// Initialize the subscription for the grandpa justification events.
-async fn initialize_subscription(
-    fetcher: &RpcDataFetcher,
-) -> Result<RpcSubscription<AvailSubscriptionGrandpaJustification>, subxt::Error> {
-    fetcher
-        .client
-        .rpc()
-        .subscribe(
-            "grandpa_subscribeJustifications",
-            RpcParams::new(),
-            "grandpa_unsubscribeJustifications",
-        )
-        .await
+async fn spawn_task(client: AvailClient, block_height: u32) -> Receiver<ChannelMessage> {
+    let (tx, rx) = mpsc::channel::<ChannelMessage>(10);
+    _ = tokio::spawn(async move { task_fetch_justifications(client, block_height, tx).await });
+    info!("Spawned Justification Task. Block Height: {}", block_height);
+
+    rx
 }
 
-/// Listen for justifications. If the subscription fails to yield a justification within the timeout
-/// or errors, it will re-initialize the subscription.
-async fn listen_for_justifications() {
-    // Avail's block time is 20 seconds, as long as this is greater than that, we should be fine.
-    let timeout_duration = std::time::Duration::from_secs(60);
-    // Time to wait before retrying the subscription.
-    let retry_delay = std::time::Duration::from_secs(5);
+async fn retrieve_justifications(
+    rx: &mut Receiver<ChannelMessage>,
+) -> Result<GrandpaJustification, ()> {
+    let maybe_message = rx.recv().await;
+    let message = match maybe_message {
+        Some(x) => x,
+        None => {
+            warn!("Justification channel is closed. Returning Error.");
+            return Err(());
+        }
+    };
+
+    let justification: GrandpaJustification = match message {
+        ChannelMessage::Justification(x) => x,
+        ChannelMessage::Error(err) => {
+            warn!("Justification Task Error: {:?}", err);
+            return Err(());
+        }
+    };
+
+    Ok(justification)
+}
+
+async fn send_justification(
+    chain_id: &str,
+    justification: &GrandpaJustification,
+) -> Result<(), String> {
+    let mut client = DatabaseClient::new().await.map_err(|x| x.to_string())?;
+    client
+        .add_justification(chain_id, justification)
+        .await
+        .map_err(|x| x.to_string())
+}
+
+async fn send_justification_loop(chain_id: &str, justification: &GrandpaJustification) {
+    let block_height = justification.commit.target_number;
+    info!("Sending justification. Block Height: {}", block_height);
 
     loop {
-        info!("Initializing fetcher and subscription...");
+        let result = send_justification(chain_id, justification).await;
+        let err = match result {
+            Ok(_) => return,
+            Err(err) => err,
+        };
 
-        let Ok(fetcher) = RpcDataFetcher::new().timeout(timeout_duration).await else {
-            error!("Failed to initialize fetcher after timeout");
+        warn!("Failed to send justification with error: {}", err);
+        warn!("Waiting 20 seconds and trying again.");
+        tokio::time::sleep(Duration::from_secs(20)).await;
+    }
+}
+
+async fn fetch_last_stored_block_height(chain_id: &str) -> Result<u32, String> {
+    let client = DatabaseClient::new().await.map_err(|x| x.to_string())?;
+    let block_height = client
+        .get_latest_block_number(chain_id)
+        .await
+        .map_err(|x| x.to_string())?;
+
+    info!("Block Height read from database: {:?}", block_height);
+    let block_height = block_height.unwrap_or_default();
+
+    Ok(block_height.saturating_sub(1))
+}
+
+// Run `DEBUG= cargo run --bin indexer` to use default debug env values
+#[tokio::main]
+pub async fn main() -> Result<(), String> {
+    // Env and Tracing
+    dotenv::dotenv().ok();
+    let tracing_builder = tracing_subscriber::fmt::SubscriberBuilder::default();
+    tracing_builder.finish().init();
+
+    let data_fetcher = RpcDataFetcher::new().await;
+    let chain_id = &data_fetcher.avail_chain_id;
+    let mut next_block_height = fetch_last_stored_block_height(chain_id).await?;
+
+    let mut rx = spawn_task(data_fetcher.client.clone(), next_block_height).await;
+
+    loop {
+        let Ok(justification) = retrieve_justifications(&mut rx).await else {
+            // We failed to retrieve justification. This most likely happened because we failed to communicate
+            // with a node.
+            warn!("Failed to retrieve justification. Waiting 20 seconds before restarting everything.");
+            tokio::time::sleep(Duration::from_secs(20)).await;
+
+            rx = spawn_task(data_fetcher.client.clone(), next_block_height).await;
             continue;
         };
 
-        // Initialize the PostgreSQL client.
-        let postgres_client = match PostgresClient::new().await {
-            Ok(client) => client,
-            Err(_) => {
-                error!("Failed to initialize PostgreSQL client");
-                continue;
-            }
-        };
+        send_justification_loop(chain_id, &justification).await;
 
-        match initialize_subscription(&fetcher).await {
-            Ok(mut sub) => {
-                debug!("Subscription initialized successfully");
-                handle_subscription(&mut sub, &postgres_client, &fetcher, timeout_duration).await;
-            }
-            Err(e) => {
-                debug!("Failed to initialize subscription: {:?}", e);
-            }
-        }
+        let block_height = justification.commit.target_number;
+        info!("Successfully added Justification to Database. Block Height: {block_height}");
 
-        debug!("Retrying subscription in {} seconds", retry_delay.as_secs());
-        tokio::time::sleep(retry_delay).await;
+        next_block_height = block_height + 1;
     }
-}
-
-#[tokio::main]
-pub async fn main() {
-    dotenv::dotenv().ok();
-    env_logger::init();
-
-    listen_for_justifications().await;
 }

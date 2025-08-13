@@ -1,4 +1,4 @@
-FROM rust:1.84.0-slim AS builder
+FROM rust:1.89.0-slim AS builder
 WORKDIR /build
 COPY . .
 ARG BUILD_PROFILE=release

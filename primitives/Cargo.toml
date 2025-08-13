@@ -15,4 +15,4 @@ alloy-sol-types = { version = "1.0" }
 
 [dev-dependencies]
 primitive-types = "0.12.2"
-avail-subxt = { git = "https://github.com/availproject/avail.git", tag = "v2.2.2.0-rc1" }
+avail-subxt = { workspace = true }
