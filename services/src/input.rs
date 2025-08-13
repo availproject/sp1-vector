@@ -586,10 +586,9 @@ fn get_merkle_tree_size(num_headers: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Commit, Precommit, SignerMessage};
-    use avail_subxt::config::Header;
-    use avail_subxt::primitives::Header as DaHeader;
-    use ed25519::Public;
+    use crate::types::SignerMessage;
+    use avail_subxt::ext::avail_rust_core::grandpa::{AuthorityId, Commit, Precommit};
+    use avail_subxt::AvailHeader;
     use serde::{Deserialize, Serialize};
     use sp1_vector_primitives::{
         rotate::get_next_validator_pubkeys_from_epoch_end_header, verify_justification,
@@ -683,7 +682,7 @@ mod tests {
     pub struct JsonGrandpaJustification {
         pub round: u64,
         pub commit: Commit,
-        pub votes_ancestries: Vec<DaHeader>,
+        pub votes_ancestries: Vec<AvailHeader>,
     }
 
     impl From<GrandpaJustification> for JsonGrandpaJustification {

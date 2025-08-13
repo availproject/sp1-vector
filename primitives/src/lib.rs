@@ -48,12 +48,14 @@ pub(crate) fn decode_scale_compact_int(bytes: Vec<u8>) -> (u64, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use avail_subxt::api::runtime_types::avail_core::header::extension::v3::HeaderExtension;
-    use avail_subxt::api::runtime_types::avail_core::header::extension::HeaderExtension::V3;
-    use avail_subxt::config::substrate::Digest;
-    use avail_subxt::primitives::Header as DaHeader;
+    use avail_subxt::ext::avail_rust_core::header::Digest;
+    use avail_subxt::ext::avail_rust_core::header::HeaderExtension;
+    use avail_subxt::ext::avail_rust_core::header::V3HeaderExtension;
+    use avail_subxt::AvailHeader;
+    use avail_subxt::CompactDataLookup;
+    use avail_subxt::KateCommitment;
+    use avail_subxt::H256;
     use codec::{Compact, Encode};
-    use primitive_types::H256;
 
     #[test]
     fn test_decode_scale_compact_int() {
@@ -80,13 +82,22 @@ mod tests {
     #[test]
     fn test_header_parent_hash_extracting() {
         let hash = H256::random();
-        let h = DaHeader {
+        let h = AvailHeader {
             parent_hash: hash,
             number: 1,
             state_root: H256::zero(),
             extrinsics_root: H256::zero(),
-            extension: V3(HeaderExtension {
-                ..Default::default()
+            extension: HeaderExtension::V3(V3HeaderExtension {
+                app_lookup: CompactDataLookup {
+                    size: 0,
+                    index: Vec::default(),
+                },
+                commitment: KateCommitment {
+                    rows: 0,
+                    cols: 0,
+                    commitment: Vec::default(),
+                    data_root: H256::default(),
+                },
             }),
             digest: Digest {
                 ..Default::default()

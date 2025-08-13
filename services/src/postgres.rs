@@ -251,10 +251,10 @@ impl PostgresClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{Commit, GrandpaJustification, Precommit, SignedPrecommit};
-    use avail_subxt::primitives::Header;
-    use sp_core::ed25519::{Public, Signature};
-    use sp_core::H256;
+    use avail_subxt::ext::avail_rust_core::grandpa::{
+        AuthorityId, Commit, Precommit, Signature, SignedPrecommit,
+    };
+    use avail_subxt::{AvailHeader, H256};
 
     #[tokio::test]
     #[ignore] // This test requires a PostgreSQL database
@@ -282,8 +282,8 @@ mod tests {
                         target_hash: H256::from_slice(&[1u8; 32]),
                         target_number: 12345,
                     },
-                    signature: Signature::from_slice(&[1u8; 64]).unwrap(),
-                    id: Public::from_slice(&[1u8; 32]).unwrap(),
+                    signature: Signature([1u8; 64]),
+                    id: AuthorityId([1u8; 32]),
                 }],
             },
             votes_ancestries: vec![],
@@ -294,7 +294,7 @@ mod tests {
 
         // Test adding justification
         client
-            .add_justification(chain_id, test_justification.clone())
+            .add_justification(chain_id, &test_justification)
             .await
             .expect("Failed to add justification");
 
