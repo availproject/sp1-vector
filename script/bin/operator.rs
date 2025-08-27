@@ -20,8 +20,11 @@ use sp1_sdk::{
     SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
+use std::str::FromStr;
+use tracing::level_filters::LevelFilter;
 use tracing::{debug, error, info, instrument};
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
@@ -202,8 +205,7 @@ where
 
         self.prover
             .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
-            .skip_simulation(true)
+            .strategy(FulfillmentStrategy::Auction)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run_async()
@@ -455,8 +457,7 @@ where
 
         self.prover
             .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
-            .skip_simulation(true)
+            .strategy(FulfillmentStrategy::Auction)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
             .run_async()
@@ -773,7 +774,6 @@ where
             if !receipt.status() {
                 return Err(anyhow::anyhow!("Transaction reverted!"));
             }
-
             Ok(receipt.transaction_hash())
         }
     }
@@ -830,34 +830,24 @@ where
         Ok(())
     }
 
-    // Run the operator, indefinitely.
+    // Run the operator.
     async fn run(self) {
         let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        let error_interval = Duration::from_secs(10);
+        // let error_interval = Duration::from_secs(10);
 
-        loop {
-            tokio::select! {
-                res = self.run_once() => {
-                    if let Err(e) = res {
-                        error!("Error during `run_once`: {:?}", e);
-                        // Sleep for less time if theres an error.
-                        tokio::time::sleep(error_interval).await;
-                        continue;
-                    }
-                },
-                _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                    continue;
+        tokio::select! {
+            res = self.run_once() => {
+                if let Err(e) = res {
+                    error!("Error during `run_once`: {:?}", e);
+                    return;
                 }
+            },
+            _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
+                info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
             }
-
-            tracing::info!(
-                "Operator ran successfully, sleeping for {} seconds",
-                loop_interval.as_secs()
-            );
-
-            // Sleep for the loop interval.
-            tokio::time::sleep(loop_interval).await;
         }
+
+        info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
     }
 }
 
@@ -886,12 +876,19 @@ fn get_block_update_interval() -> u32 {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    tracing_subscriber::fmt::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from_env("info")),
+    let log_level = env::var("LOG_LEVEL").unwrap_or("info".to_string());
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_current_span(true)
+                .with_line_number(true)
+                .with_target(true),
         )
+        .with(LevelFilter::from_str(&log_level)?)
         .init();
 
     let signer_mode = env::var("SIGNER_MODE")
@@ -903,6 +900,8 @@ async fn main() {
         SignerMode::Local => run_with_signer(config).await,
         SignerMode::Kms => run_with_kms(config).await,
     }
+
+    Ok(())
 }
 
 async fn run_with_signer(config: Vec<ChainConfig>) {
