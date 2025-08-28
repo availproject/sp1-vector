@@ -8,27 +8,26 @@ use alloy::{
 };
 use futures::future::{join_all, try_join_all};
 use std::env;
+use std::ops::Mul;
 use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::{EnvProver};
+use sp1_sdk::EnvProver;
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
-use tracing::{debug, error, info, instrument};
-use tracing::level_filters::LevelFilter;
-use tracing_subscriber::layer::SubscriberExt;
-use tracing_subscriber::util::SubscriberInitExt;
 use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
-
+use tracing::level_filters::LevelFilter;
+use tracing::{debug, error, info, instrument};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use config::{ChainConfig, SignerMode};
 
@@ -762,6 +761,13 @@ where
             if !receipt.status() {
                 return Err(anyhow::anyhow!("Transaction reverted!"));
             }
+
+            let gas_used: u128 = receipt.gas_used() as u128;
+
+            info!(
+                message = "Transaction gas fee used",
+                gas_fee = gas_used.mul(receipt.effective_gas_price())
+            );
 
             Ok(receipt.transaction_hash())
         }
