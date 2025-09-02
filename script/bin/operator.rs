@@ -766,7 +766,8 @@ where
 
             info!(
                 message = "Transaction gas fee used",
-                gas_fee = gas_used.mul(receipt.effective_gas_price())
+                gas_fee = gas_used.mul(receipt.effective_gas_price()),
+                tx_hash = %receipt.transaction_hash()
             );
 
             Ok(receipt.transaction_hash())
