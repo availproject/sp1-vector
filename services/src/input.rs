@@ -1,4 +1,4 @@
-use crate::types::{EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse};
+use crate::types::{FinalityProof, VectorXJustificationApiResponse};
 use alloy::primitives::{B256, B512};
 use anyhow::Result;
 use codec::{Compact, Decode, Encode};
@@ -402,17 +402,46 @@ impl RpcDataFetcher {
         let mut params = RpcParams::new();
         let _ = params.push(epoch_end_block);
 
-        let encoded_finality_proof = self
+        // Try to call the RPC method and handle both binary and hex string responses
+        let rpc_response: serde_json::Value = self
             .client
             .rpc_api()
-            .call::<EncodedFinalityProof>("grandpa_proveFinality", params)
+            .call("grandpa_proveFinality", params)
             .await
-            .unwrap();
+            .map_err(|e| anyhow::anyhow!("RPC call failed: {:?}", e))?;
 
-        let finality_proof: FinalityProof =
-            Decode::decode(&mut encoded_finality_proof.0.as_slice()).unwrap();
-        let justification: GrandpaJustification =
-            Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
+        // Handle the response which might be a hex string or binary data
+        let encoded_finality_proof = match rpc_response {
+            serde_json::Value::String(hex_string) => {
+                // If it's a hex string, convert it to bytes
+                if hex_string.starts_with("0x") {
+                    hex::decode(&hex_string[2..])
+                        .map_err(|e| anyhow::anyhow!("Failed to decode hex string: {:?}", e))?
+                } else {
+                    hex::decode(&hex_string)
+                        .map_err(|e| anyhow::anyhow!("Failed to decode hex string: {:?}", e))?
+                }
+            }
+            serde_json::Value::Array(bytes_array) => {
+                // If it's an array of numbers, convert to bytes
+                bytes_array
+                    .iter()
+                    .filter_map(|v| v.as_u64().map(|n| n as u8))
+                    .collect()
+            }
+            _ => {
+                return Err(anyhow::anyhow!(
+                    "Unexpected RPC response type: {:?}",
+                    rpc_response
+                ));
+            }
+        };
+
+        let finality_proof: FinalityProof = Decode::decode(&mut encoded_finality_proof.as_slice())
+            .map_err(|e| anyhow::anyhow!("Failed to decode FinalityProof: {:?}", e))?;
+        
+        let justification: GrandpaJustification = Decode::decode(&mut finality_proof.justification.as_slice())
+            .map_err(|e| anyhow::anyhow!("Failed to decode GrandpaJustification: {:?}", e))?;
 
         Ok(justification)
     }
