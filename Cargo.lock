@@ -6297,6 +6297,7 @@ dependencies = [
  "env_logger",
  "futures",
  "hex",
+ "impl-serde",
  "parity-scale-codec",
  "reqwest 0.11.27",
  "serde",

@@ -405,9 +405,11 @@ impl RpcDataFetcher {
         let encoded_finality_proof = self
             .client
             .rpc_api()
-            .call::<EncodedFinalityProof>("grandpa_proveFinality", params)
-            .await
-            .unwrap();
+            .call::<Option<EncodedFinalityProof>>("grandpa_proveFinality", params)
+            .await?;
+
+        let encoded_finality_proof = encoded_finality_proof
+            .ok_or(anyhow::anyhow!("grandpa_proveFinality RPC returned None."))?;
 
         let finality_proof: FinalityProof =
             Decode::decode(&mut encoded_finality_proof.0.as_slice()).unwrap();

@@ -3,6 +3,8 @@ use avail_subxt::{AvailHeader, H256};
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
+pub use impl_serde::serialize as bytes;
+
 #[derive(Debug, Encode)]
 pub enum SignerMessage {
     #[allow(dead_code)]
@@ -11,7 +13,7 @@ pub enum SignerMessage {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct EncodedFinalityProof(pub Vec<u8>);
+pub struct EncodedFinalityProof(#[serde(with = "bytes")] pub Vec<u8>);
 
 #[derive(Debug, Encode, Decode, Clone, Deserialize)]
 pub struct FinalityProof {
