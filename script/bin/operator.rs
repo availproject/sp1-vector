@@ -8,6 +8,7 @@ use alloy::{
 };
 use futures::future::{join_all, try_join_all};
 use std::env;
+use std::ops::Mul;
 use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
@@ -812,6 +813,14 @@ where
             if !receipt.status() {
                 return Err(anyhow::anyhow!("Transaction reverted!"));
             }
+
+            let gas_used: u128 = receipt.gas_used() as u128;
+
+            info!(
+                message = "Transaction gas fee used",
+                gas_fee = gas_used.mul(receipt.effective_gas_price()),
+                tx_hash = %receipt.transaction_hash()
+            );
 
             Ok(receipt.transaction_hash())
         }
