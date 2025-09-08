@@ -32,6 +32,18 @@ pub struct VectorXJustificationApiResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CoingekoApiResponse {
+    #[serde(alias = "ethereum")]
+    pub from_asset: EthToUSDRate,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct EthToUSDRate {
+    #[serde(alias = "usd")]
+    pub to_asset: u128,
+}
+
 #[cfg(test)]
 mod tests {
     use super::VectorXJustificationApiResponse;

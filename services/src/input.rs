@@ -1,4 +1,6 @@
-use crate::types::{EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse};
+use crate::types::{
+    CoingekoApiResponse, EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse,
+};
 use alloy::primitives::{B256, B512};
 use anyhow::Result;
 use codec::{Compact, Decode, Encode};
@@ -541,6 +543,19 @@ impl RpcDataFetcher {
             consensus_log_position: position,
         }
     }
+}
+
+pub async fn fetch_eth_to_usd_rate() -> CoingekoApiResponse {
+    let coingeko_url =
+        env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
+    let coingeko_api_key = env::var("COINGEKO_API_KEY").expect("Missing COINGEKO_API_KEY env");
+    let price_endpoint = format!(
+        "{}/v3/simple/price?ids={}&vs_currencies={}&x_cg_api_key={}",
+        coingeko_url, "ethereum", "usd", coingeko_api_key
+    );
+    let response = reqwest::get(price_endpoint).await.unwrap();
+
+    response.json::<CoingekoApiResponse>().await.unwrap()
 }
 
 /// Converts GrandpaJustification and validator set to CircuitJustification.
