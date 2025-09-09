@@ -880,8 +880,7 @@ where
 
     // Run the operator, indefinitely.
     async fn run(self) {
-        let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        // let error_interval = Duration::from_secs(10);
+        let job_interval = Duration::from_secs(get_job_interval_mins() * 60);
 
         tokio::select! {
             res = self.run_once() => {
@@ -895,15 +894,16 @@ where
             }
         }
 
-        info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
+        info!("Sleeping for {:?} minutes", job_interval.as_secs() / 60);
     }
 }
 
-fn get_loop_interval_mins() -> u64 {
-    let loop_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
+// returns the interval of the job that triggers the operator
+fn get_job_interval_mins() -> u64 {
+    let job_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
     let mut loop_interval_mins = 60;
-    if loop_interval_mins_env.is_ok() {
-        loop_interval_mins = loop_interval_mins_env
+    if job_interval_mins_env.is_ok() {
+        loop_interval_mins = job_interval_mins_env
             .unwrap()
             .parse::<u64>()
             .expect("invalid LOOP_INTERVAL_MINS");
