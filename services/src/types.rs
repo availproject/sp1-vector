@@ -41,7 +41,7 @@ pub struct CoingekoApiResponse {
 #[derive(Debug, Deserialize)]
 pub struct EthToUSDRate {
     #[serde(alias = "usd")]
-    pub to_asset: u128,
+    pub to_asset: f64,
 }
 
 #[cfg(test)]
