@@ -720,7 +720,7 @@ mod tests {
     }
 
     #[test_case("test_assets/ancestry.json"; "Complex ancestry")]
-    #[test_case("test_assets/ancestry_missing_link_no_majority.json" => panics "Less than 2/3 of signatures are verified"; "Missing ancestor negative case")]
+    #[test_case("test_assets/ancestry_missing_link_no_majority.json" => panics "More than 2/3 of signatures are not verifie!"; "Missing ancestor negative case")]
     #[test_case("test_assets/ancestry_missing_link_works.json"; "Missing ancestor")]
     /// Tesing some complex justifications, serialized in JSON format (for readability)
     fn test_complex_justification(path: &str) {
