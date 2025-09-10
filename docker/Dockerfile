@@ -8,16 +8,16 @@ RUN apt update && apt install -y git make libssl-dev pkg-config libpq-dev build-
     && cargo build --profile $BUILD_PROFILE --bin $BIN_MODE --locked \
     && cp /build/target/$BUILD_PROFILE/$BIN_MODE /build/vectorx-$BIN_MODE
 
-FROM ubuntu:22.04 AS run
+FROM ubuntu:25.04 AS run
 WORKDIR /app
 ARG BIN_MODE=indexer
 ENV BIN_MODE_ENV=indexer
 
 COPY --from=builder /build/vectorx-$BIN_MODE /usr/local/bin
 
-RUN adduser --disabled-password --gecos "" --no-create-home --uid 1000 bridge \
-    && apt-get update && apt-get install -y ca-certificates libpq-dev \
+RUN apt-get update && apt-get install -y ca-certificates libpq-dev adduser \
     && apt clean \
+    && adduser --disabled-password --gecos "" --no-create-home --uid 1001 bridge \
     && chown -R bridge:bridge /usr/local/bin/vectorx-$BIN_MODE
 
 USER bridge
