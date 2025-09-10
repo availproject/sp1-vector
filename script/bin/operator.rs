@@ -9,7 +9,7 @@ use alloy::{
 };
 use futures::future::{join_all, try_join_all};
 use std::env;
-use std::ops::Mul;
+use std::ops::{Div, Mul};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
@@ -763,10 +763,9 @@ where
                 return Err(anyhow::anyhow!("Transaction reverted!"));
             }
 
-            let effective_gas_used: u128 = receipt
-                .effective_gas_price()
-                .mul(receipt.gas_used() as u128)
-                .div_ceil(Unit::ETHER.wei_const().to::<u128>());
+            let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
+            let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
+            let effective_gas_used = effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
 
             let eth_to_usd_rate = fetch_eth_to_usd_rate().await;
             let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
