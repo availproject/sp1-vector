@@ -16,12 +16,12 @@ use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
 use services::input::{fetch_eth_to_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
+use services::Timeout;
+use sp1_sdk::network::FulfillmentStrategy;
 use sp1_sdk::EnvProver;
 use sp1_sdk::{
     HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
-
-use services::Timeout;
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
@@ -38,7 +38,7 @@ use config::{ChainConfig, SignerMode};
 
 // If the SP1 proof takes too long to respond, time out.
 // timeout available only for sp1 network
-// const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
+const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
 
 // If the operator takes too long to run, time out.
 const LOOP_TIMEOUT_MINS: u64 = 30;
@@ -195,15 +195,37 @@ where
         );
 
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        if let Ok(prover_type) = env::var("SP1_PROVER") {
-            if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build();
-                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
-                return Ok(proof);
-            }
-        }
+        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
+        let proof = if mock {
+            info!("Using mock proof to insert header range proof.");
+            let prover_client = ProverClient::builder().mock().build();
+            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            Ok(proof)
+        } else {
+            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
+            return if spn {
+                info!("Using spn proof to insert header range proof.");
 
-        self.prover.prove(&self.pk, &stdin).plonk().run()
+                let spn_client = ProverClient::builder().network().build();
+                let balance = spn_client.get_balance().await?;
+                info!(message = "Available balance", balance = balance.to_string());
+
+                let proof = spn_client
+                    .prove(&self.pk, &stdin)
+                    .strategy(FulfillmentStrategy::Auction)
+                    .min_auction_period(10)
+                    .plonk()
+                    .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
+                    .run_async()
+                    .await;
+                proof
+            } else {
+                info!("Using env defined client insert header range proof.");
+                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
+                proof
+            };
+        };
+        proof
     }
 
     // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
@@ -441,15 +463,45 @@ where
         );
 
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        if let Ok(prover_type) = env::var("SP1_PROVER") {
-            if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build();
-                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
-                return Ok(proof);
-            }
-        }
+        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
+        let proof = if mock {
+            info!(
+                "Using mock proof to add authority set {}.",
+                current_authority_set_id
+            );
+            let prover_client = ProverClient::builder().mock().build();
+            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            Ok(proof)
+        } else {
+            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
+            return if spn {
+                info!(
+                    "Using spn proof to add authority set {}.",
+                    current_authority_set_id
+                );
+                let spn_client = ProverClient::builder().network().build();
+                let balance = spn_client.get_balance().await?;
+                info!(message = "Available balance", balance = balance.to_string());
 
-        self.prover.prove(&self.pk, &stdin).plonk().run()
+                let proof = spn_client
+                    .prove(&self.pk, &stdin)
+                    .strategy(FulfillmentStrategy::Auction)
+                    .min_auction_period(10)
+                    .plonk()
+                    .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
+                    .run_async()
+                    .await;
+                proof
+            } else {
+                info!(
+                    "Using env defined client to add authority set {}.",
+                    current_authority_set_id
+                );
+                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
+                proof
+            };
+        };
+        proof
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
@@ -835,8 +887,7 @@ where
 
     // Run the operator, indefinitely.
     async fn run(self) {
-        let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        // let error_interval = Duration::from_secs(10);
+        let job_interval = Duration::from_secs(get_job_interval_mins() * 60);
 
         tokio::select! {
             res = self.run_once() => {
@@ -850,15 +901,16 @@ where
             }
         }
 
-        info!("Sleeping for {:?} minutes", loop_interval.as_secs() / 60);
+        info!("Sleeping for {:?} minutes", job_interval.as_secs() / 60);
     }
 }
 
-fn get_loop_interval_mins() -> u64 {
-    let loop_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
+// returns the interval of the job that triggers the operator
+fn get_job_interval_mins() -> u64 {
+    let job_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
     let mut loop_interval_mins = 60;
-    if loop_interval_mins_env.is_ok() {
-        loop_interval_mins = loop_interval_mins_env
+    if job_interval_mins_env.is_ok() {
+        loop_interval_mins = job_interval_mins_env
             .unwrap()
             .parse::<u64>()
             .expect("invalid LOOP_INTERVAL_MINS");
