@@ -1,4 +1,5 @@
 use alloy::network::{ReceiptResponse, TransactionBuilder};
+use alloy::primitives::utils::Unit;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
     network::Network,
@@ -8,13 +9,13 @@ use alloy::{
 };
 use futures::future::{join_all, try_join_all};
 use std::env;
-use std::ops::Mul;
+use std::ops::{Div, Mul};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 
 use anyhow::{Context, Result};
-use services::input::{HeaderRangeRequestData, RpcDataFetcher};
+use services::input::{fetch_eth_to_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
 use sp1_sdk::network::FulfillmentStrategy;
 use sp1_sdk::EnvProver;
@@ -814,11 +815,17 @@ where
                 return Err(anyhow::anyhow!("Transaction reverted!"));
             }
 
-            let gas_used: u128 = receipt.gas_used() as u128;
+            let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
+            let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
+            let effective_gas_used = effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
+
+            let eth_to_usd_rate = fetch_eth_to_usd_rate().await;
+            let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
 
             info!(
                 message = "Transaction gas fee used",
-                gas_fee = gas_used.mul(receipt.effective_gas_price()),
+                gas_fee = effective_gas_used,
+                usd_fee = usd_fee,
                 tx_hash = %receipt.transaction_hash()
             );
 
