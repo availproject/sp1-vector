@@ -268,6 +268,11 @@ impl RpcDataFetcher {
             .await
             .unwrap()
             .unwrap();
+        // todo hacky way of using auth set for hex devnet
+        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
+        if avail_chain_id == "hex" {
+            return set_id - 1;
+        }
 
         set_id
     }
