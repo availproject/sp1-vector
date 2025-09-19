@@ -801,6 +801,11 @@ where
             let max_estimate_retries: u8 = env::var("MAX_ESTIMATE_RETRIES")
                 .unwrap_or("5".to_string())
                 .parse()?;
+
+            let retry_sleep_interval: u64 = env::var("RETRY_SLEEP_INTERVAL")
+                .unwrap_or("60".to_string())
+                .parse()?;
+
             let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
                 .unwrap_or("2.00".to_string())
                 .parse()?;
@@ -817,12 +822,12 @@ where
                 if effective_gas_estimate > max_usd_fee_threshold {
                     info!(
                         message = "USD Gas fee too high!!",
-                        usd_estimate = effective_gas_estimate
+                        usd_estimate = round_to_decimals(effective_gas_estimate, 2)
                     );
                     if attempt == max_estimate_retries {
                         return Err(anyhow::anyhow!("Max retries exceeded due to high gas fees"));
                     }
-                    sleep_until(Instant::now() + Duration::from_secs(60)).await;
+                    sleep_until(Instant::now() + Duration::from_secs(retry_sleep_interval)).await;
                     continue;
                 }
 
@@ -957,8 +962,9 @@ fn get_block_update_interval() -> u32 {
     block_update_interval
 }
 
-fn round_two_decimals(float: f64) -> f64 {
-    (float * 100.0).round() / 100.0
+fn round_to_decimals(value: f64, decimals: u32) -> f64 {
+    let factor = 10f64.powi(decimals as i32);
+    (value * factor).round() / factor
 }
 
 async fn convert_to_usd_gas_fee(gas_fee_eth: f64) -> f64 {
@@ -989,9 +995,9 @@ where
         gas_estimate = gas_estimate,
         effective_gas_estimate = effective_gas_estimate,
         max_fee_per_gas = max_fee_per_gas,
-        usd_estimate = round_two_decimals(usd_estimate)
+        usd_estimate = round_to_decimals(usd_estimate, 2)
     );
-    round_two_decimals(usd_estimate)
+    round_to_decimals(usd_estimate, 6)
 }
 
 #[tokio::main]
