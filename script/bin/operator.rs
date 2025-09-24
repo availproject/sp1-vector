@@ -15,8 +15,8 @@ use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 use tokio::time::{sleep_until, Instant};
 
-use anyhow::{Context, Error, Result};
-use services::input::{fetch_eth_to_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
+use anyhow::{Context, Result};
+use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
 use sp1_sdk::network::FulfillmentStrategy;
 use sp1_sdk::EnvProver;
@@ -779,11 +779,67 @@ where
         }
     }
 
+    async fn submit_proof(
+        &self,
+        chain_id: u64,
+        tx: N::TransactionRequest,
+    ) -> Result<N::ReceiptResponse> {
+        let contract = self
+            .contracts
+            .get(&chain_id)
+            .expect("No contract for chain id");
+
+        let receipt = contract
+            .provider()
+            .send_transaction(tx)
+            .await?
+            .with_required_confirmations(NUM_CONFIRMATIONS)
+            .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
+            .get_receipt()
+            .await?;
+
+        if !receipt.status() {
+            return Err(anyhow::anyhow!("Transaction reverted!"));
+        }
+        Ok(receipt)
+    }
+
+    async fn estimate_effective_usd_gas_fee(
+        &self,
+        chain_id: u64,
+        tx: &N::TransactionRequest,
+    ) -> f64 {
+        let contract = self
+            .contracts
+            .get(&chain_id)
+            .expect("No contract for chain id");
+
+        let wei = Unit::ETHER.wei_const().to::<u64>() as f64;
+        let gas_estimate = contract.provider().estimate_gas(tx.clone()).await.unwrap() as f64;
+
+        let max_fee_per_gas = contract
+            .provider()
+            .estimate_eip1559_fees()
+            .await
+            .unwrap()
+            .max_fee_per_gas as f64;
+        let effective_gas_estimate = gas_estimate.mul(max_fee_per_gas).div(wei);
+        let usd_estimate = convert_to_usd_gas_fee(effective_gas_estimate).await;
+        info!(
+            message = "Gas estimate",
+            gas_estimate = gas_estimate,
+            effective_gas_estimate = effective_gas_estimate,
+            max_fee_per_gas = max_fee_per_gas,
+            usd_estimate = round_to_decimals(usd_estimate, 2)
+        );
+        round_to_decimals(usd_estimate, 6)
+    }
+
     /// Relay a transaction to the given chain id.
     ///
     /// NOTE: Assumes the provider has a wallet.
     #[instrument(skip(self, tx))]
-    async fn relay_tx(&self, chain_id: u64, tx: N::TransactionRequest) -> Result<B256, Error> {
+    async fn relay_tx(&self, chain_id: u64, tx: N::TransactionRequest) -> Result<B256> {
         debug!("Relaying transaction to chain {}", chain_id);
 
         if matches!(self.signer_mode, SignerMode::Kms) {
@@ -798,70 +854,47 @@ where
             )
             .await
         } else {
-            let max_estimate_retries: u8 = env::var("MAX_ESTIMATE_RETRIES")
-                .unwrap_or("5".to_string())
-                .parse()?;
+            let (max_estimate_retries, retry_sleep_interval, max_usd_fee_threshold) =
+                get_retry_envs()?;
 
-            let retry_sleep_interval: u64 = env::var("RETRY_SLEEP_INTERVAL")
-                .unwrap_or("60".to_string())
-                .parse()?;
+            let mut attempt: u8 = 0;
 
-            let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
-                .unwrap_or("2.00".to_string())
-                .parse()?;
-
-            let contract = self
-                .contracts
-                .get(&chain_id)
-                .expect("No contract for chain id");
-
-            for attempt in 1..=max_estimate_retries {
+            let tx_hash: B256 = loop {
                 let effective_gas_estimate =
-                    estimate_effective_usd_gas_fee(contract.provider(), &tx).await;
+                    self.estimate_effective_usd_gas_fee(chain_id, &tx).await;
 
-                if effective_gas_estimate > max_usd_fee_threshold {
+                let should_send_now = effective_gas_estimate <= max_usd_fee_threshold
+                    || attempt == max_estimate_retries;
+
+                if should_send_now {
+                    let receipt = self.submit_proof(chain_id, tx).await?;
+                    let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
+                    let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
+                    let effective_gas_used =
+                        effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
+
+                    let eth_to_usd_rate = fetch_usd_rate().await;
+                    let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
+
                     info!(
-                        message = "USD Gas fee too high!!",
-                        usd_estimate = round_to_decimals(effective_gas_estimate, 2)
+                        message = "Transaction gas fee used",
+                        gas_fee = effective_gas_used,
+                        usd_fee = usd_fee,
+                        tx_hash = %receipt.transaction_hash()
                     );
-                    if attempt == max_estimate_retries {
-                        return Err(anyhow::anyhow!("Max retries exceeded due to high gas fees"));
-                    }
-                    sleep_until(Instant::now() + Duration::from_secs(retry_sleep_interval)).await;
-                    continue;
+
+                    break receipt.transaction_hash();
                 }
-
-                let receipt = contract
-                    .provider()
-                    .send_transaction(tx)
-                    .await?
-                    .with_required_confirmations(NUM_CONFIRMATIONS)
-                    .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
-                    .get_receipt()
-                    .await?;
-
-                if !receipt.status() {
-                    return Err(anyhow::anyhow!("Transaction reverted!"));
-                }
-
-                let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
-                let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
-                let effective_gas_used =
-                    effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
-
-                let eth_to_usd_rate = fetch_eth_to_usd_rate().await;
-                let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
 
                 info!(
-                    message = "Transaction gas fee used",
-                    gas_fee = effective_gas_used,
-                    usd_fee = usd_fee,
-                    tx_hash = %receipt.transaction_hash()
+                    message = "USD Gas fee too high!!",
+                    usd_estimate = round_to_decimals(effective_gas_estimate, 2)
                 );
+                sleep_until(Instant::now() + Duration::from_secs(retry_sleep_interval)).await;
+                attempt += 1;
+            };
 
-                return Ok(receipt.transaction_hash());
-            }
-            Err(anyhow::anyhow!("Max retries exceeded"))
+            return Ok(tx_hash);
         }
     }
 
@@ -962,42 +995,34 @@ fn get_block_update_interval() -> u32 {
     block_update_interval
 }
 
+fn get_retry_envs() -> Result<(u8, u64, f64)> {
+    let max_estimate_retries: u8 = env::var("MAX_ESTIMATE_RETRIES")
+        .unwrap_or("5".to_string())
+        .parse()?;
+
+    let retry_sleep_interval: u64 = env::var("RETRY_SLEEP_INTERVAL")
+        .unwrap_or("60".to_string())
+        .parse()?;
+
+    let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
+        .unwrap_or("2.00".to_string())
+        .parse()?;
+
+    return Ok((
+        max_estimate_retries,
+        retry_sleep_interval,
+        max_usd_fee_threshold,
+    ));
+}
+
 fn round_to_decimals(value: f64, decimals: u32) -> f64 {
     let factor = 10f64.powi(decimals as i32);
     (value * factor).round() / factor
 }
 
-async fn convert_to_usd_gas_fee(gas_fee_eth: f64) -> f64 {
-    let eth_to_usd_rate = fetch_eth_to_usd_rate().await;
-    gas_fee_eth * eth_to_usd_rate.from_asset.to_asset
-}
-
-async fn estimate_effective_usd_gas_fee<P, N>(
-    provider: &P,
-    tx_request: &N::TransactionRequest,
-) -> f64
-where
-    P: Provider<N>,
-    N: Network,
-{
-    let wei = Unit::ETHER.wei_const().to::<u64>() as f64;
-    let gas_estimate = provider.estimate_gas(tx_request.clone()).await.unwrap() as f64;
-
-    let max_fee_per_gas = provider
-        .estimate_eip1559_fees()
-        .await
-        .unwrap()
-        .max_fee_per_gas as f64;
-    let effective_gas_estimate = gas_estimate.mul(max_fee_per_gas).div(wei);
-    let usd_estimate = convert_to_usd_gas_fee(effective_gas_estimate).await;
-    info!(
-        message = "Gas estimate",
-        gas_estimate = gas_estimate,
-        effective_gas_estimate = effective_gas_estimate,
-        max_fee_per_gas = max_fee_per_gas,
-        usd_estimate = round_to_decimals(usd_estimate, 2)
-    );
-    round_to_decimals(usd_estimate, 6)
+async fn convert_to_usd_gas_fee(gas_fee: f64) -> f64 {
+    let eth_to_usd_rate = fetch_usd_rate().await;
+    gas_fee * eth_to_usd_rate.from_asset.to_asset
 }
 
 #[tokio::main]
