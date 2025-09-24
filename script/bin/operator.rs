@@ -13,7 +13,7 @@ use std::ops::{Div, Mul};
 use std::str::FromStr;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
-use tokio::time::{sleep_until, Instant};
+use tokio::time::sleep;
 
 use anyhow::{Context, Result};
 use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
@@ -853,7 +853,7 @@ where
                 NUM_RELAY_RETRIES,
             )
             .await
-        } else {
+        } else if matches!(chain_id, 1) {
             let (max_estimate_retries, retry_sleep_interval, max_usd_fee_threshold) =
                 get_retry_envs()?;
 
@@ -890,11 +890,14 @@ where
                     message = "USD Gas fee too high!!",
                     usd_estimate = round_to_decimals(effective_gas_estimate, 2)
                 );
-                sleep_until(Instant::now() + Duration::from_secs(retry_sleep_interval)).await;
+                sleep(Duration::from_secs(retry_sleep_interval)).await;
                 attempt += 1;
             };
 
             return Ok(tx_hash);
+        } else {
+            let receipt = self.submit_proof(chain_id, tx).await?;
+            Ok(receipt.transaction_hash())
         }
     }
 
