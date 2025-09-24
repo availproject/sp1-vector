@@ -550,7 +550,7 @@ impl RpcDataFetcher {
     }
 }
 
-pub async fn fetch_usd_rate() -> CoingekoApiResponse {
+pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
     let from_token: String = env::var("ASSET_TO_USD_CONVERSION").unwrap_or("ethereum".to_string());
     let coingeko_url =
         env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
@@ -561,7 +561,7 @@ pub async fn fetch_usd_rate() -> CoingekoApiResponse {
     );
     let response = reqwest::get(price_endpoint).await.unwrap();
 
-    response.json::<CoingekoApiResponse>().await.unwrap()
+    Ok(response.json::<CoingekoApiResponse>().await?)
 }
 
 /// Converts GrandpaJustification and validator set to CircuitJustification.

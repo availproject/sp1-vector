@@ -808,23 +808,22 @@ where
         &self,
         chain_id: u64,
         tx: &N::TransactionRequest,
-    ) -> f64 {
+    ) -> Result<f64> {
         let contract = self
             .contracts
             .get(&chain_id)
             .expect("No contract for chain id");
 
-        let wei = Unit::ETHER.wei_const().to::<u64>() as f64;
-        let gas_estimate = contract.provider().estimate_gas(tx.clone()).await.unwrap() as f64;
+        let wei: f64 = Unit::ETHER.wei_const().to::<u64>() as f64;
+        let gas_estimate: f64 = contract.provider().estimate_gas(tx.clone()).await? as f64;
 
         let max_fee_per_gas = contract
             .provider()
             .estimate_eip1559_fees()
-            .await
-            .unwrap()
+            .await?
             .max_fee_per_gas as f64;
         let effective_gas_estimate = gas_estimate.mul(max_fee_per_gas).div(wei);
-        let usd_estimate = convert_to_usd_gas_fee(effective_gas_estimate).await;
+        let usd_estimate = convert_to_usd_gas_fee(effective_gas_estimate).await?;
         info!(
             message = "Gas estimate",
             gas_estimate = gas_estimate,
@@ -832,7 +831,7 @@ where
             max_fee_per_gas = max_fee_per_gas,
             usd_estimate = round_to_decimals(usd_estimate, 2)
         );
-        round_to_decimals(usd_estimate, 6)
+        Ok(round_to_decimals(usd_estimate, 6))
     }
 
     /// Relay a transaction to the given chain id.
@@ -860,8 +859,10 @@ where
             let mut attempt: u8 = 0;
 
             let tx_hash: B256 = loop {
-                let effective_gas_estimate =
-                    self.estimate_effective_usd_gas_fee(chain_id, &tx).await;
+                let effective_gas_estimate = self
+                    .estimate_effective_usd_gas_fee(chain_id, &tx)
+                    .await
+                    .expect("Fail to estimate USD gas fees");
 
                 let should_send_now = effective_gas_estimate <= max_usd_fee_threshold
                     || attempt == max_estimate_retries;
@@ -873,7 +874,7 @@ where
                     let effective_gas_used =
                         effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
 
-                    let eth_to_usd_rate = fetch_usd_rate().await;
+                    let eth_to_usd_rate = fetch_usd_rate().await?;
                     let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
 
                     info!(
@@ -1023,9 +1024,9 @@ fn round_to_decimals(value: f64, decimals: u32) -> f64 {
     (value * factor).round() / factor
 }
 
-async fn convert_to_usd_gas_fee(gas_fee: f64) -> f64 {
-    let eth_to_usd_rate = fetch_usd_rate().await;
-    gas_fee * eth_to_usd_rate.from_asset.to_asset
+async fn convert_to_usd_gas_fee(gas_fee: f64) -> Result<f64> {
+    let eth_to_usd_rate = fetch_usd_rate().await?;
+    Ok(gas_fee * eth_to_usd_rate.from_asset.to_asset)
 }
 
 #[tokio::main]
