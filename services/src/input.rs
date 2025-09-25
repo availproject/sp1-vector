@@ -550,17 +550,18 @@ impl RpcDataFetcher {
     }
 }
 
-pub async fn fetch_eth_to_usd_rate() -> CoingekoApiResponse {
+pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
+    let from_token: String = env::var("ASSET_TO_USD_CONVERSION").unwrap_or("ethereum".to_string());
     let coingeko_url =
         env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
     let coingeko_api_key = env::var("COINGEKO_API_KEY").expect("Missing COINGEKO_API_KEY env");
     let price_endpoint = format!(
         "{}/v3/simple/price?ids={}&vs_currencies={}&x_cg_api_key={}",
-        coingeko_url, "ethereum", "usd", coingeko_api_key
+        coingeko_url, from_token, "usd", coingeko_api_key
     );
     let response = reqwest::get(price_endpoint).await.unwrap();
 
-    response.json::<CoingekoApiResponse>().await.unwrap()
+    Ok(response.json::<CoingekoApiResponse>().await?)
 }
 
 /// Converts GrandpaJustification and validator set to CircuitJustification.
