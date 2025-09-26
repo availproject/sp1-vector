@@ -857,6 +857,7 @@ where
                 get_retry_envs()?;
 
             let mut attempt: u8 = 0;
+            let mut last_estimates: Vec<f64> = vec![];
 
             let tx_hash: B256 = loop {
                 let effective_gas_estimate = self
@@ -866,6 +867,8 @@ where
 
                 let should_send_now = effective_gas_estimate <= max_usd_fee_threshold
                     || attempt == max_estimate_retries;
+
+                last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
 
                 if should_send_now {
                     let receipt = self.submit_proof(chain_id, tx).await?;
@@ -881,7 +884,8 @@ where
                         message = "Transaction gas fee used",
                         gas_fee = effective_gas_used,
                         usd_fee = usd_fee,
-                        tx_hash = %receipt.transaction_hash()
+                        tx_hash = %receipt.transaction_hash(),
+                        last_usd_gas_estimates = ?last_estimates
                     );
 
                     break receipt.transaction_hash();
