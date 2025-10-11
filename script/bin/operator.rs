@@ -15,7 +15,7 @@ use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 use tokio::time::sleep;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
 use sp1_sdk::network::FulfillmentStrategy;
@@ -853,8 +853,12 @@ where
             )
             .await
         } else if matches!(chain_id, 1) {
-            let (max_estimate_retries, retry_sleep_interval, max_usd_fee_threshold) =
-                get_retry_envs()?;
+            let (
+                max_estimate_retries,
+                retry_sleep_interval,
+                target_usd_fee_threshold,
+                max_usd_fee_threshold,
+            ) = get_retry_envs()?;
 
             let mut attempt: u8 = 0;
             let mut last_estimates: Vec<f64> = vec![];
@@ -865,8 +869,9 @@ where
                     .await
                     .expect("Fail to estimate USD gas fees");
 
-                let should_send_now = effective_gas_estimate <= max_usd_fee_threshold
-                    || attempt == max_estimate_retries;
+                let should_send_now = effective_gas_estimate <= target_usd_fee_threshold
+                    || (attempt == max_estimate_retries
+                        && effective_gas_estimate < max_usd_fee_threshold);
 
                 last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
 
@@ -889,6 +894,13 @@ where
                     );
 
                     break receipt.transaction_hash();
+                } else if !should_send_now {
+                    error!(
+                        message = "Failed to match send proof condition",
+                        gas_estimate = effective_gas_estimate,
+                        attempts = attempt
+                    );
+                    bail!("Failed to match send proof condition");
                 }
 
                 info!(
@@ -1003,7 +1015,7 @@ fn get_block_update_interval() -> u32 {
     block_update_interval
 }
 
-fn get_retry_envs() -> Result<(u8, u64, f64)> {
+fn get_retry_envs() -> Result<(u8, u64, f64, f64)> {
     let max_estimate_retries: u8 = env::var("MAX_ESTIMATE_RETRIES")
         .unwrap_or("5".to_string())
         .parse()?;
@@ -1012,13 +1024,18 @@ fn get_retry_envs() -> Result<(u8, u64, f64)> {
         .unwrap_or("60".to_string())
         .parse()?;
 
-    let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
+    let target_usd_fee_threshold: f64 = env::var("TARGET_USD_FEE_THRESHOLD")
         .unwrap_or("2.00".to_string())
+        .parse()?;
+
+    let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
+        .unwrap_or("30.00".to_string())
         .parse()?;
 
     return Ok((
         max_estimate_retries,
         retry_sleep_interval,
+        target_usd_fee_threshold,
         max_usd_fee_threshold,
     ));
 }
