@@ -869,46 +869,48 @@ where
                     .await
                     .expect("Fail to estimate USD gas fees");
 
-                let should_send_now = effective_gas_estimate <= target_usd_fee_threshold
-                    || (attempt == max_estimate_retries
-                        && effective_gas_estimate < max_usd_fee_threshold);
-
                 last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
 
-                if should_send_now {
-                    let receipt = self.submit_proof(chain_id, tx).await?;
-                    let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
-                    let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
-                    let effective_gas_used =
-                        effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
-
-                    let eth_to_usd_rate = fetch_usd_rate().await?;
-                    let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
-
-                    info!(
-                        message = "Transaction gas fee used",
-                        gas_fee = effective_gas_used,
-                        usd_fee = usd_fee,
-                        tx_hash = %receipt.transaction_hash(),
-                        last_usd_gas_estimates = ?last_estimates
-                    );
-
-                    break receipt.transaction_hash();
-                } else if !should_send_now {
-                    error!(
-                        message = "Failed to match send proof condition",
-                        gas_estimate = effective_gas_estimate,
-                        attempts = attempt
-                    );
-                    bail!("Failed to match send proof condition");
+                // 1. If the price is acceptable let's just send it, no questions asked.
+                if effective_gas_estimate <= target_usd_fee_threshold {
+                    let tx_hash = self
+                        .submit_proof_with_info(chain_id, &tx, last_estimates.last().cloned())
+                        .await?;
+                    break tx_hash;
                 }
 
                 info!(
                     message = "USD Gas fee too high!!",
                     usd_estimate = round_to_decimals(effective_gas_estimate, 2)
                 );
-                sleep(Duration::from_secs(retry_sleep_interval)).await;
-                attempt += 1;
+
+                // 2. Otherwise let's wait and see if the price will go down later. Do this
+                // for [`max_estimate_retries`] times
+                if attempt < max_estimate_retries {
+                    error!(
+                        message = "Failed to match send proof condition",
+                        gas_estimate = effective_gas_estimate,
+                        attempts = attempt
+                    );
+
+                    sleep(Duration::from_secs(retry_sleep_interval)).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                // 3. If we reached the maximum number of retires we should check one more time,
+                // but this time with a higher threshold. If the higher threshold doesn't help
+                // then we need to bail out. Sorry
+                if effective_gas_estimate <= max_usd_fee_threshold {
+                    let tx_hash = self
+                        .submit_proof_with_info(chain_id, &tx, last_estimates.last().cloned())
+                        .await?;
+                    break tx_hash;
+                }
+
+                // If we are here it means that we have exhausted all the retires and everything.
+                // There is nothing that we can do now. :(
+                bail!("Failed to match send proof condition");
             };
 
             return Ok(tx_hash);
@@ -916,6 +918,31 @@ where
             let receipt = self.submit_proof(chain_id, tx).await?;
             Ok(receipt.transaction_hash())
         }
+    }
+
+    async fn submit_proof_with_info(
+        &self,
+        chain_id: u64,
+        tx: &N::TransactionRequest,
+        last_estimates: Option<f64>,
+    ) -> Result<B256> {
+        let receipt = self.submit_proof(chain_id, tx.clone()).await?;
+        let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
+        let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
+        let effective_gas_used = effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
+
+        let eth_to_usd_rate = fetch_usd_rate().await?;
+        let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
+
+        info!(
+            message = "Transaction gas fee used",
+            gas_fee = effective_gas_used,
+            usd_fee = usd_fee,
+            tx_hash = %receipt.transaction_hash(),
+            last_usd_gas_estimates = ?last_estimates
+        );
+
+        Ok(receipt.transaction_hash())
     }
 
     /// Check the verifying key in the contract matches the
