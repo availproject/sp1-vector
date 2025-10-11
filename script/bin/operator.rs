@@ -884,19 +884,22 @@ where
                     usd_estimate = round_to_decimals(effective_gas_estimate, 2)
                 );
 
+                error!(
+                    message = "Failed to match send proof condition",
+                    gas_estimate = effective_gas_estimate,
+                    attempts = attempt
+                );
+
                 // 2. Otherwise let's wait and see if the price will go down later. Do this
                 // for [`max_estimate_retries`] times
                 if attempt < max_estimate_retries {
-                    error!(
-                        message = "Failed to match send proof condition",
-                        gas_estimate = effective_gas_estimate,
-                        attempts = attempt
-                    );
-
+                    error!(message = "Retrying...",);
                     sleep(Duration::from_secs(retry_sleep_interval)).await;
                     attempt += 1;
                     continue;
                 }
+
+                error!(message = "Exhausted all retires. Checking one more time but this time with a higher threshold",);
 
                 // 3. If we reached the maximum number of retires we should check one more time,
                 // but this time with a higher threshold. If the higher threshold doesn't help
@@ -910,6 +913,7 @@ where
 
                 // If we are here it means that we have exhausted all the retires and everything.
                 // There is nothing that we can do now. :(
+                error!(message = "Exhausted all options. Failed to submit proof. Exiting loop");
                 bail!("Failed to match send proof condition");
             };
 
