@@ -864,16 +864,21 @@ where
             let mut last_estimates: Vec<f64> = vec![];
 
             let tx_hash: B256 = loop {
-                let effective_gas_estimate = self
+
+                let effective_gas_usd_estimate = self
                     .estimate_effective_usd_gas_fee(chain_id, &tx)
                     .await
                     .expect("Fail to estimate USD gas fees");
 
-                let should_send_now = effective_gas_estimate <= target_usd_fee_threshold
-                    || (attempt == max_estimate_retries
-                        && effective_gas_estimate < max_usd_fee_threshold);
+                let is_target_fee_below_threshold = effective_gas_usd_estimate <= target_usd_fee_threshold;
+                let is_fee_below_max_threshold = effective_gas_usd_estimate <= max_usd_fee_threshold;
+                let is_max_retry_exhausted = attempt == max_estimate_retries;
 
-                last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
+                // NOTE: Tx will not be sent if max retries exhausted and not below the fee threshold
+                let should_send_now = is_target_fee_below_threshold ||
+                    (is_max_retry_exhausted && is_fee_below_max_threshold);
+
+                last_estimates.push(round_to_decimals(effective_gas_usd_estimate, 2));
 
                 if should_send_now {
                     let receipt = self.submit_proof(chain_id, tx).await?;
@@ -897,7 +902,7 @@ where
                 } else if !should_send_now {
                     error!(
                         message = "Failed to match send proof condition",
-                        gas_estimate = effective_gas_estimate,
+                        gas_estimate = effective_gas_usd_estimate,
                         attempts = attempt
                     );
                     bail!("Failed to match send proof condition");
@@ -905,7 +910,7 @@ where
 
                 info!(
                     message = "USD Gas fee too high!!",
-                    usd_estimate = round_to_decimals(effective_gas_estimate, 2)
+                    usd_estimate = round_to_decimals(effective_gas_usd_estimate, 2)
                 );
                 sleep(Duration::from_secs(retry_sleep_interval)).await;
                 attempt += 1;
@@ -1032,12 +1037,12 @@ fn get_retry_envs() -> Result<(u8, u64, f64, f64)> {
         .unwrap_or("30.00".to_string())
         .parse()?;
 
-    return Ok((
+    Ok((
         max_estimate_retries,
         retry_sleep_interval,
         target_usd_fee_threshold,
         max_usd_fee_threshold,
-    ));
+    ))
 }
 
 fn round_to_decimals(value: f64, decimals: u32) -> f64 {
