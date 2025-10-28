@@ -1002,22 +1002,23 @@ where
     }
 
     // Run the operator, indefinitely.
-    async fn run(self) {
+    async fn run(self) -> Result<()> {
         let job_interval = Duration::from_secs(get_job_interval_mins() * 60);
 
         tokio::select! {
             res = self.run_once() => {
                 if let Err(e) = res {
                     error!("Error during `run_once`: {:?}", e);
-                    return;
+                    return Err(anyhow::anyhow!("Error during `run_once`"));
                 }
             },
             _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                info!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS);
+                return Err(anyhow::anyhow!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS));
             }
         }
 
         info!("Sleeping for {:?} minutes", job_interval.as_secs() / 60);
+        Ok(())
     }
 }
 
@@ -1102,15 +1103,15 @@ async fn main() -> Result<()> {
         .unwrap_or(SignerMode::Local);
     let config = ChainConfig::fetch().expect("Failed to fetch chain config");
 
-    match signer_mode {
+    let run_result = match signer_mode {
         SignerMode::Local => run_with_signer(config).await,
         SignerMode::Kms => run_with_kms(config).await,
-    }
+    };
 
-    Ok(())
+    run_result
 }
 
-async fn run_with_signer(config: Vec<ChainConfig>) {
+async fn run_with_signer(config: Vec<ChainConfig>) -> Result<()> {
     let mut operator = SP1VectorOperator::new(SignerMode::Local).await;
 
     let signer: PrivateKeySigner = env::var("PRIVATE_KEY")
@@ -1129,7 +1130,7 @@ async fn run_with_signer(config: Vec<ChainConfig>) {
     operator.run().await
 }
 
-async fn run_with_kms(config: Vec<ChainConfig>) {
+async fn run_with_kms(config: Vec<ChainConfig>) -> Result<()> {
     let mut operator = SP1VectorOperator::new(SignerMode::Kms).await;
 
     for c in config {
