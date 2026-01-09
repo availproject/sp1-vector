@@ -559,7 +559,11 @@ pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
         "{}/v3/simple/price?ids={}&vs_currencies={}&x_cg_api_key={}",
         coingeko_url, from_token, "usd", coingeko_api_key
     );
-    let response = reqwest::get(price_endpoint).await.unwrap();
+    let client = reqwest::Client::builder()
+        .user_agent("Avail-SP1-Vector/1.0 (Ethereum Gas Price Monitor)")
+        .build()?;
+
+    let response = client.get(price_endpoint).send().await.unwrap();
 
     Ok(response.json::<CoingekoApiResponse>().await?)
 }
