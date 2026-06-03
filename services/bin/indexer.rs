@@ -1,8 +1,8 @@
-use avail_subxt::primitives::Header;
 use avail_subxt::RpcParams;
 use codec::Decode;
 use serde::de::Error;
 use serde::Deserialize;
+use services::avail::Header;
 use services::input::RpcDataFetcher;
 use services::postgres::PostgresClient;
 use services::types::{Commit, GrandpaJustification};

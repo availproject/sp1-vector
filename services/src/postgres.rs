@@ -118,7 +118,6 @@ impl PostgresClient {
 mod tests {
     use super::*;
     use crate::types::{Commit, GrandpaJustification, Precommit, SignedPrecommit};
-    use avail_subxt::primitives::Header;
     use sp_core::ed25519::{Public, Signature};
     use sp_core::H256;
 
@@ -149,7 +148,7 @@ mod tests {
                         target_number: 12345,
                     },
                     signature: Signature::from_slice(&[1u8; 64]).unwrap(),
-                    id: Public::from_slice(&[1u8; 32]).unwrap(),
+                    id: Public::from_raw([1u8; 32]),
                 }],
             },
             votes_ancestries: vec![],

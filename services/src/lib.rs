@@ -1,3 +1,4 @@
+pub mod avail;
 pub mod input;
 pub mod postgres;
 pub mod types;

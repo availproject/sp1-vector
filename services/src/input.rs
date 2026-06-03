@@ -10,11 +10,11 @@ use std::cmp::Ordering;
 use std::env;
 use subxt::backend::rpc::RpcSubscription;
 
+use crate::avail::Header;
 use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
 use alloy::primitives::{B256, B512};
 use avail_subxt::avail_client::AvailClient;
 use avail_subxt::config::substrate::DigestItem;
-use avail_subxt::primitives::Header;
 use avail_subxt::{api, RpcParams};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
@@ -236,12 +236,7 @@ impl RpcDataFetcher {
 
     pub async fn get_header(&self, block_number: u32) -> Header {
         let block_hash = self.get_block_hash(block_number).await;
-        let header_result = self
-            .client
-            .legacy_rpc()
-            .chain_get_header(Some(H256::from(block_hash.0)))
-            .await;
-        header_result.unwrap().unwrap()
+        self.get_header_by_hash(H256::from(block_hash.0)).await
     }
 
     pub async fn get_head(&self) -> Header {
@@ -251,12 +246,18 @@ impl RpcDataFetcher {
             .chain_get_finalized_head()
             .await
             .unwrap();
-        let header = self
-            .client
-            .legacy_rpc()
-            .chain_get_header(Some(head_block_hash))
-            .await;
-        header.unwrap().unwrap()
+        self.get_header_by_hash(head_block_hash).await
+    }
+
+    pub async fn get_header_by_hash(&self, block_hash: H256) -> Header {
+        let mut params = RpcParams::new();
+        params.push(block_hash).unwrap();
+        self.client
+            .rpc()
+            .request::<Option<Header>>("chain_getHeader", params)
+            .await
+            .unwrap()
+            .unwrap()
     }
 
     pub async fn get_authority_set_id(&self, block_number: u32) -> u64 {
@@ -376,12 +377,8 @@ impl RpcDataFetcher {
         if let Some(Ok(justification)) = sub.next().await {
             // Get the header corresponding to the new justification.
             let header = self
-                .client
-                .legacy_rpc()
-                .chain_get_header(Some(justification.commit.target_hash))
-                .await
-                .unwrap()
-                .unwrap();
+                .get_header_by_hash(justification.commit.target_hash)
+                .await;
             let block_number = header.number;
             return (
                 self.compute_data_from_justification(justification, block_number)
@@ -587,8 +584,6 @@ fn get_merkle_tree_size(num_headers: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::types::{Commit, Precommit, SignerMessage};
-    use avail_subxt::config::Header;
-    use avail_subxt::primitives::Header as DaHeader;
     use ed25519::Public;
     use serde::{Deserialize, Serialize};
     use sp1_vector_primitives::{
@@ -683,7 +678,7 @@ mod tests {
     pub struct JsonGrandpaJustification {
         pub round: u64,
         pub commit: Commit,
-        pub votes_ancestries: Vec<DaHeader>,
+        pub votes_ancestries: Vec<Header>,
     }
 
     impl From<GrandpaJustification> for JsonGrandpaJustification {
