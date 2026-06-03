@@ -1,0 +1,64 @@
+# Builds the `indexer` bin from the `services` crate via docker/Dockerfile (BIN_MODE),
+# renamed to `vectorx-indexer`, and pushes to registry.digitalocean.com/availj.
+name: Release vectorx-indexer
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+      - 'v*.*.*-*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (e.g. v0.7.0)'
+        required: true
+
+jobs:
+  docker_build_push:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: true
+      matrix:
+        # The services crate currently exposes only the `indexer` bin.
+        # Add more here (e.g. operator) once they exist as [[bin]] targets.
+        binary: [indexer]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        id: buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve image tag + registry
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag_name=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "do_registry=registry.digitalocean.com" >> "$GITHUB_OUTPUT"
+
+      - name: Login to DigitalOcean Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ steps.meta.outputs.do_registry }}
+          username: ${{ secrets.DO_USER_EMAIL }}
+          password: ${{ secrets.DO_USER_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          builder: ${{ steps.buildx.outputs.name }}
+          context: .
+          file: ./docker/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ steps.meta.outputs.do_registry }}/availj/vectorx-${{ matrix.binary }}:${{ steps.meta.outputs.tag_name }}
+          build-args: |
+            BUILD_PROFILE=release
+            BIN_MODE=${{ matrix.binary }}
+          cache-from: type=gha,scope=vectorx-${{ matrix.binary }}
+          cache-to: type=gha,scope=vectorx-${{ matrix.binary }},mode=max
