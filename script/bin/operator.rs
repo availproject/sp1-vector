@@ -19,9 +19,9 @@ use anyhow::{bail, Context, Result};
 use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
 use sp1_sdk::network::FulfillmentStrategy;
-use sp1_sdk::EnvProver;
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
@@ -82,10 +82,12 @@ type SP1VectorInstance<P, N> = SP1Vector::SP1VectorInstance<P, N>;
 struct SP1VectorOperator<P, N> {
     pk: SP1ProvingKey,
     vk: SP1VerifyingKey,
+    // NOTE: a single proving key (and its verifying key) is derived once at startup via the mock
+    // prover; in SP1 v6 the concrete CPU/mock/network provers all use `SP1ProvingKey`, so it can be
+    // reused across whichever prover the `SP1_PROVER` env var selects per request.
     signer_mode: SignerMode,
     tree_size: Option<u32>,
     fetcher: RpcDataFetcher,
-    prover: EnvProver,
     contracts: HashMap<u64, SP1VectorInstance<P, N>>,
 }
 
@@ -115,15 +117,18 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::from_env();
-        let (pk, vk) = prover.setup(SP1_VECTOR_ELF);
+        let prover = ProverClient::builder().mock().build().await;
+        let pk = prover
+            .setup(SP1_VECTOR_ELF.into())
+            .await
+            .expect("Failed to set up the proving key");
+        let vk = pk.verifying_key().clone();
 
         Self {
             fetcher: RpcDataFetcher::new().await,
             pk,
             vk,
             signer_mode,
-            prover,
             contracts: HashMap::new(),
             tree_size: None,
         }
@@ -199,31 +204,31 @@ where
         let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
         let proof = if mock {
             info!("Using mock proof to insert header range proof.");
-            let prover_client = ProverClient::builder().mock().build();
-            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            let prover_client = ProverClient::builder().mock().build().await;
+            let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
             Ok(proof)
         } else {
             let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
             return if spn {
                 info!("Using spn proof to insert header range proof.");
 
-                let spn_client = ProverClient::builder().network().build();
+                let spn_client = ProverClient::builder().network().build().await;
                 let balance = spn_client.get_balance().await?;
                 info!(message = "Available balance", balance = balance.to_string());
 
                 let proof = spn_client
-                    .prove(&self.pk, &stdin)
+                    .prove(&self.pk, stdin)
                     .strategy(FulfillmentStrategy::Auction)
                     .min_auction_period(10)
                     .plonk()
                     .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .run_async()
-                    .await;
-                proof
+                    .await?;
+                Ok(proof)
             } else {
                 info!("Using env defined client insert header range proof.");
-                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
-                proof
+                let prover_client = ProverClient::builder().cpu().build().await;
+                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
+                Ok(proof)
             };
         };
         proof
@@ -470,8 +475,8 @@ where
                 "Using mock proof to add authority set {}.",
                 current_authority_set_id
             );
-            let prover_client = ProverClient::builder().mock().build();
-            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            let prover_client = ProverClient::builder().mock().build().await;
+            let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
             Ok(proof)
         } else {
             let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
@@ -480,26 +485,26 @@ where
                     "Using spn proof to add authority set {}.",
                     current_authority_set_id
                 );
-                let spn_client = ProverClient::builder().network().build();
+                let spn_client = ProverClient::builder().network().build().await;
                 let balance = spn_client.get_balance().await?;
                 info!(message = "Available balance", balance = balance.to_string());
 
                 let proof = spn_client
-                    .prove(&self.pk, &stdin)
+                    .prove(&self.pk, stdin)
                     .strategy(FulfillmentStrategy::Auction)
                     .min_auction_period(10)
                     .plonk()
                     .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .run_async()
-                    .await;
-                proof
+                    .await?;
+                Ok(proof)
             } else {
                 info!(
                     "Using env defined client to add authority set {}.",
                     current_authority_set_id
                 );
-                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
-                proof
+                let prover_client = ProverClient::builder().cpu().build().await;
+                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
+                Ok(proof)
             };
         };
         proof

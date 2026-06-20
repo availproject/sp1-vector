@@ -3,7 +3,7 @@
 use alloy::sol_types::SolType;
 use clap::Parser;
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::{utils::setup_logger, ProverClient, SP1Stdin};
+use sp1_sdk::{utils::setup_logger, Prover, ProverClient, SP1Stdin};
 use sp1_vector_primitives::types::{ProofOutput, ProofType};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
 
@@ -64,9 +64,9 @@ async fn main() -> anyhow::Result<()> {
         }
     }
 
-    let client = ProverClient::from_env();
+    let client = ProverClient::from_env().await;
 
-    let (pv, report) = client.execute(SP1_VECTOR_ELF, &stdin).run()?;
+    let (pv, report) = client.execute(SP1_VECTOR_ELF.into(), stdin).await?;
 
     let _ = ProofOutput::abi_decode(pv.as_slice())?;
 
