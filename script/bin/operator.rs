@@ -16,8 +16,8 @@ use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::NetworkProver;
 use sp1_sdk::{
-    network::FulfillmentStrategy, HashableKey, Prover, ProverClient, SP1ProofWithPublicValues,
-    SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    network::FulfillmentStrategy, Elf, HashableKey, ProveRequest, Prover, ProverClient,
+    ProvingKey, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
 use tracing::{debug, error, info, instrument};
@@ -111,8 +111,12 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::builder().network().build();
-        let (pk, vk) = prover.setup(SP1_VECTOR_ELF);
+        let prover = ProverClient::builder().network().build().await;
+        let pk = prover
+            .setup(Elf::Static(SP1_VECTOR_ELF))
+            .await
+            .expect("failed to setup prover");
+        let vk = pk.verifying_key().clone();
 
         Self {
             fetcher: RpcDataFetcher::new().await,
@@ -194,19 +198,18 @@ where
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
         if let Ok(prover_type) = env::var("SP1_PROVER") {
             if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build();
-                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+                let prover_client = ProverClient::builder().mock().build().await;
+                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
                 return Ok(proof);
             }
         }
 
         self.prover
-            .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
+            .prove(&self.pk, stdin)
+            .strategy(FulfillmentStrategy::Auction)
             .skip_simulation(true)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .run_async()
             .await
     }
 
@@ -447,19 +450,18 @@ where
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
         if let Ok(prover_type) = env::var("SP1_PROVER") {
             if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build();
-                let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+                let prover_client = ProverClient::builder().mock().build().await;
+                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
                 return Ok(proof);
             }
         }
 
         self.prover
-            .prove(&self.pk, &stdin)
-            .strategy(FulfillmentStrategy::Reserved)
+            .prove(&self.pk, stdin)
+            .strategy(FulfillmentStrategy::Auction)
             .skip_simulation(true)
             .plonk()
             .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .run_async()
             .await
     }
 
