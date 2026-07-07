@@ -16,8 +16,8 @@ use anyhow::{Context, Result};
 use services::input::{HeaderRangeRequestData, RpcDataFetcher};
 use sp1_sdk::NetworkProver;
 use sp1_sdk::{
-    network::FulfillmentStrategy, Elf, HashableKey, ProveRequest, Prover, ProverClient,
-    ProvingKey, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    network::FulfillmentStrategy, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
+    SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
 };
 
 use tracing::{debug, error, info, instrument};
@@ -148,15 +148,15 @@ where
             .expect("Failed to get chain id");
 
         // Register the first tree size.
-        if self.tree_size.is_none() {
-            self.tree_size = Some(tree_size);
-        } else if self.tree_size.unwrap() != tree_size {
-            panic!(
-                "Tree size mismatch! Expected {}, got {} for chain id {}",
-                self.tree_size.unwrap(),
-                tree_size,
-                chain_id
-            );
+        match self.tree_size {
+            None => self.tree_size = Some(tree_size),
+            Some(existing) if existing != tree_size => {
+                panic!(
+                    "Tree size mismatch! Expected {}, got {} for chain id {}",
+                    existing, tree_size, chain_id
+                );
+            }
+            Some(_) => {}
         }
 
         self.contracts.insert(chain_id, contract);
@@ -864,11 +864,9 @@ where
 }
 
 fn get_loop_interval_mins() -> u64 {
-    let loop_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
     let mut loop_interval_mins = 60;
-    if loop_interval_mins_env.is_ok() {
+    if let Ok(loop_interval_mins_env) = env::var("LOOP_INTERVAL_MINS") {
         loop_interval_mins = loop_interval_mins_env
-            .unwrap()
             .parse::<u64>()
             .expect("invalid LOOP_INTERVAL_MINS");
     }
@@ -876,11 +874,9 @@ fn get_loop_interval_mins() -> u64 {
 }
 
 fn get_block_update_interval() -> u32 {
-    let block_update_interval_env = env::var("BLOCK_UPDATE_INTERVAL");
     let mut block_update_interval = 360;
-    if block_update_interval_env.is_ok() {
+    if let Ok(block_update_interval_env) = env::var("BLOCK_UPDATE_INTERVAL") {
         block_update_interval = block_update_interval_env
-            .unwrap()
             .parse::<u32>()
             .expect("invalid BLOCK_UPDATE_INTERVAL");
     }
