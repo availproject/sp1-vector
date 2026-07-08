@@ -84,7 +84,7 @@ mod tests {
 }"#;
 
         let justification_rsp: VectorXJustificationApiResponse = serde_json::from_str(rsp).unwrap();
-        assert_eq!(justification_rsp.success, true);
+        assert!(justification_rsp.success);
 
         let justification = justification_rsp.justification.unwrap();
 
@@ -114,7 +114,7 @@ mod tests {
                 "fe0652f4564fe2b55fcd41edac2846da7eec9aae335db8149f456a9b784141ab"
             ))
         );
-        assert_eq!(hex::encode(&justification.commit.precommits[1].signature.0), "da13946cf5ed0ded1a0d385bcfa4ee2edda7dade7569dc9dff34fdf520f97b4468c2ea77cb7c6cdc5350a70b7d0a28d8512b62e3c20f392d80dad1f18fa67400");
+        assert_eq!(hex::encode(justification.commit.precommits[1].signature.0), "da13946cf5ed0ded1a0d385bcfa4ee2edda7dade7569dc9dff34fdf520f97b4468c2ea77cb7c6cdc5350a70b7d0a28d8512b62e3c20f392d80dad1f18fa67400");
         assert_eq!(justification.votes_ancestries.len(), 0);
     }
 }

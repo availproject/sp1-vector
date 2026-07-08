@@ -254,7 +254,7 @@ mod tests {
     use avail_subxt::ext::avail_rust_core::grandpa::{
         AuthorityId, Commit, Precommit, Signature, SignedPrecommit,
     };
-    use avail_subxt::{AvailHeader, H256};
+    use avail_subxt::H256;
 
     #[tokio::test]
     #[ignore] // This test requires a PostgreSQL database

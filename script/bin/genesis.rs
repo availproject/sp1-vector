@@ -4,7 +4,7 @@
 //!
 use clap::Parser;
 use services::input::RpcDataFetcher;
-use sp1_sdk::{HashableKey, Prover, ProverClient};
+use sp1_sdk::{Elf, HashableKey, Prover, ProverClient, ProvingKey};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
 
 #[derive(Parser, Debug, Clone)]
@@ -19,8 +19,12 @@ const HEADER_RANGE_COMMITMENT_TREE_SIZE: u32 = 1024;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let fetcher = RpcDataFetcher::new().await;
-    let client = ProverClient::builder().mock().build();
-    let (_pk, vk) = client.setup(SP1_VECTOR_ELF);
+    let client = ProverClient::builder().mock().build().await;
+    let pk = client
+        .setup(Elf::Static(SP1_VECTOR_ELF))
+        .await
+        .expect("failed to setup prover");
+    let vk = pk.verifying_key();
 
     let args = GenesisArgs::parse();
 
