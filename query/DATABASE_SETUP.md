@@ -23,6 +23,10 @@ CREATE TABLE IF NOT EXISTS justifications (
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(avail_chain_id, block_number)
 );
+
+CREATE INDEX IF NOT EXISTS idx_justifications_avail_chain_id ON justifications(avail_chain_id);
+CREATE INDEX IF NOT EXISTS idx_justifications_block_number ON justifications(block_number);
+CREATE INDEX IF NOT EXISTS idx_justifications_avail_chain_block ON justifications(avail_chain_id, block_number);
 ```
 
 ## Setup Instructions
@@ -51,4 +55,4 @@ The response format is unchanged:
 
 The following dependencies have been updated:
 - Removed: `@aws-sdk/client-dynamodb`
-- Added: `pg`, `@types/pg` 
+- Added: `pg`, `@types/pg`

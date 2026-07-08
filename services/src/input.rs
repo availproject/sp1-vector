@@ -1,25 +1,27 @@
+use crate::types::{
+    CoingekoApiResponse, EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse,
+};
+use alloy::primitives::{B256, B512};
 use anyhow::Result;
-use avail_subxt::primitives::grandpa::{AuthorityId, ConsensusLog};
+use codec::{Compact, Decode, Encode};
+use futures::future::join_all;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
 use sp1_vector_primitives::{compute_authority_set_commitment, consts::HASH_SIZE};
-use sp_core::H256;
 use std::cmp::Ordering;
 use std::env;
-use subxt::backend::rpc::RpcSubscription;
+use std::time::Duration;
 
-use crate::types::{EncodedFinalityProof, FinalityProof, GrandpaJustification};
-use alloy::primitives::{B256, B512};
-use avail_subxt::avail_client::AvailClient;
-use avail_subxt::config::substrate::DigestItem;
-use avail_subxt::primitives::Header;
-use avail_subxt::{api, RpcParams};
-use codec::{Compact, Decode, Encode};
-use futures::future::join_all;
-use serde::Deserialize;
-use sp_core::ed25519;
+use avail_subxt::avail_rust_core::grandpa::{GrandpaJustification, Public};
+use avail_subxt::subxt_rpcs::client::RpcParams;
+use avail_subxt::StorageValue;
+use avail_subxt::{
+    avail_rust_core::grandpa::{AuthorityId, ConsensusLog},
+    ext::subxt_core::config::substrate::DigestItem,
+    AvailHeader, Client as AvailClient, H256,
+};
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.
@@ -41,16 +43,22 @@ pub struct HeaderRangeRequestData {
     pub is_target_epoch_end_block: bool,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct VectorXQueryResponse {
-    pub success: bool,
-    pub justification: Option<GrandpaJustification>,
-    pub error: Option<String>,
-}
-
 impl RpcDataFetcher {
     pub async fn new() -> Self {
         dotenv::dotenv().ok();
+
+        if std::env::var("DEBUG").is_ok() {
+            let url = env::var("AVAIL_URL").unwrap_or_else(|_| "http://localhost:9944".to_owned());
+            let client = AvailClient::new(url.as_str()).await.unwrap();
+            let avail_chain_id =
+                env::var("AVAIL_CHAIN_ID").unwrap_or_else(|_| "avail_c".to_owned());
+            let vectorx_query_url = env::var("VECTORX_QUERY_URL").ok();
+            return RpcDataFetcher {
+                client,
+                avail_chain_id,
+                vectorx_query_url,
+            };
+        }
 
         let url = env::var("AVAIL_URL").expect("AVAIL_URL must be set");
         let client = AvailClient::new(url.as_str()).await.unwrap();
@@ -63,7 +71,7 @@ impl RpcDataFetcher {
         }
     }
 
-    /// Gets a justification from the vectorx-query service, which reads the data from postgres database.
+    /// TODO
     pub async fn get_justification(&self, block_number: u32) -> Result<GrandpaJustification> {
         if self.vectorx_query_url.is_none() {
             return Err(anyhow::anyhow!("VECTORX_QUERY_URL must be set"));
@@ -80,16 +88,25 @@ impl RpcDataFetcher {
         );
 
         let response = reqwest::get(request_url).await?;
-        let json_response = response.json::<VectorXQueryResponse>().await?;
+        let response: VectorXJustificationApiResponse =
+            response.json::<VectorXJustificationApiResponse>().await?;
 
-        let is_success = json_response.success;
-        if !is_success {
+        if !response.success {
+            println!(
+                "Error while querying justification for block {:?}: {:?}",
+                block_number, response.error
+            );
             return Err(anyhow::anyhow!(
                 "No justification found for the specified block number."
             ));
         }
 
-        Ok(json_response.justification.unwrap())
+        // justification must exits if the success is true
+        // todo better design
+        match response.justification {
+            Some(x) => Ok(x),
+            _ => Err(anyhow::anyhow!("Justification from response was none")),
+        }
     }
 
     /// Get the inputs for a header range proof. Optionally pass in the header range commitment tree size.
@@ -192,11 +209,7 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_block_hash(&self, block_number: u32) -> B256 {
-        let block_hash = self
-            .client
-            .legacy_rpc()
-            .chain_get_block_hash(Some(block_number.into()))
-            .await;
+        let block_hash = self.client.block_hash_ext(block_number, true, false).await;
 
         B256::from(block_hash.unwrap().unwrap().0)
     }
@@ -206,7 +219,7 @@ impl RpcDataFetcher {
         &self,
         start_block_number: u32,
         end_block_number: u32,
-    ) -> Vec<Header> {
+    ) -> Vec<AvailHeader> {
         // Fetch the headers in batches of MAX_CONCURRENT_WS_REQUESTS. The WS connection will error if there
         // are too many concurrent requests with Rpc(ClientError(MaxSlotsExceeded)).
         const MAX_CONCURRENT_WS_REQUESTS: usize = 200;
@@ -226,7 +239,7 @@ impl RpcDataFetcher {
                 .collect();
 
             // Await all futures concurrently
-            let headers_batch: Vec<Header> = join_all(header_futures).await;
+            let headers_batch: Vec<AvailHeader> = join_all(header_futures).await;
 
             headers.extend_from_slice(&headers_batch);
             curr_block += MAX_CONCURRENT_WS_REQUESTS as u32;
@@ -234,42 +247,36 @@ impl RpcDataFetcher {
         headers
     }
 
-    pub async fn get_header(&self, block_number: u32) -> Header {
+    pub async fn get_header(&self, block_number: u32) -> AvailHeader {
         let block_hash = self.get_block_hash(block_number).await;
-        let header_result = self
-            .client
-            .legacy_rpc()
-            .chain_get_header(Some(H256::from(block_hash.0)))
-            .await;
+        let header_result = self.client.block_header(H256::from(block_hash.0)).await;
+
         header_result.unwrap().unwrap()
     }
 
-    pub async fn get_head(&self) -> Header {
-        let head_block_hash = self
-            .client
-            .legacy_rpc()
-            .chain_get_finalized_head()
-            .await
-            .unwrap();
-        let header = self
-            .client
-            .legacy_rpc()
-            .chain_get_header(Some(head_block_hash))
-            .await;
+    pub async fn get_head(&self) -> AvailHeader {
+        let head_block_hash = self.client.finalized_block_hash_ext(true).await.unwrap();
+        let header = self.client.block_header(head_block_hash).await;
+
         header.unwrap().unwrap()
     }
 
     pub async fn get_authority_set_id(&self, block_number: u32) -> u64 {
+        use avail_subxt::avail::grandpa::storage::CurrentSetId;
         let block_hash = self.get_block_hash(block_number).await;
 
-        let set_id_key = api::storage().grandpa().current_set_id();
-        self.client
-            .storage()
-            .at(H256::from(block_hash.0))
-            .fetch(&set_id_key)
+        let at = Some(H256::from(block_hash.0));
+        let set_id = CurrentSetId::fetch(&self.client.rpc_client, at)
             .await
             .unwrap()
-            .unwrap()
+            .unwrap();
+        // todo hacky way of using auth set for hex devnet
+        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
+        if avail_chain_id == "hex" {
+            return set_id - 1;
+        }
+
+        set_id
     }
 
     // This function returns the authorities (as AffinePoint and public key bytes) for a given block number
@@ -281,8 +288,11 @@ impl RpcDataFetcher {
         let grandpa_authorities = self
             .client
             .runtime_api()
-            .at(H256::from(block_hash.0))
-            .call_raw::<Vec<(ed25519::Public, u64)>>("GrandpaApi_grandpa_authorities", None)
+            .call::<Vec<(Public, u64)>>(
+                "GrandpaApi_grandpa_authorities",
+                &[],
+                Some(H256::from(block_hash.0)),
+            )
             .await
             .unwrap();
 
@@ -360,36 +370,34 @@ impl RpcDataFetcher {
 
     /// Get the latest justification data. Because Avail does not store the justification data for
     /// all blocks, we can only generate a proof using the latest justification data or the justification data for a specific block.
-    pub async fn get_latest_justification_data(&self) -> (CircuitJustification, Header) {
-        let sub: Result<RpcSubscription<GrandpaJustification>, _> = self
-            .client
-            .rpc()
-            .subscribe(
-                "grandpa_subscribeJustifications",
-                RpcParams::new(),
-                "grandpa_unsubscribeJustifications",
-            )
-            .await;
-        let mut sub = sub.unwrap();
+    pub async fn get_latest_justification_data(&self) -> (CircuitJustification, AvailHeader) {
+        let Ok(block_height) = self.client.finalized_block_height_ext(true, false).await else {
+            panic!("Failed to fetch finalized block height")
+        };
 
-        // Wait for new justification.
-        if let Some(Ok(justification)) = sub.next().await {
-            // Get the header corresponding to the new justification.
-            let header = self
-                .client
-                .legacy_rpc()
-                .chain_get_header(Some(justification.commit.target_hash))
-                .await
-                .unwrap()
-                .unwrap();
-            let block_number = header.number;
-            return (
-                self.compute_data_from_justification(justification, block_number)
-                    .await,
-                header,
-            );
-        }
-        panic!("No justification found")
+        let mut sub = self
+            .client
+            .subscription_grandpa_justification(block_height, Duration::from_secs(5));
+
+        let Ok(justification) = sub.next().await else {
+            panic!("Failed to fetch next justification")
+        };
+
+        let (block_height, block_hash) = (
+            justification.commit.target_number,
+            justification.commit.target_hash,
+        );
+
+        let Ok(Some(block_header)) = self.client.block_header_ext(block_hash, true, false).await
+        else {
+            panic!("Failed to fetch block header")
+        };
+
+        let data = self
+            .compute_data_from_justification(justification, block_height)
+            .await;
+
+        (data, block_header)
     }
 
     /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
@@ -403,13 +411,15 @@ impl RpcDataFetcher {
 
         let encoded_finality_proof = self
             .client
-            .rpc()
-            .request::<EncodedFinalityProof>("grandpa_proveFinality", params)
-            .await
-            .unwrap();
+            .rpc_api()
+            .call::<Option<EncodedFinalityProof>>("grandpa_proveFinality", params)
+            .await?;
+
+        let encoded_finality_proof = encoded_finality_proof
+            .ok_or(anyhow::anyhow!("grandpa_proveFinality RPC returned None."))?;
 
         let finality_proof: FinalityProof =
-            Decode::decode(&mut encoded_finality_proof.0 .0.as_slice()).unwrap();
+            Decode::decode(&mut encoded_finality_proof.0.as_slice()).unwrap();
         let justification: GrandpaJustification =
             Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
 
@@ -456,14 +466,13 @@ impl RpcDataFetcher {
             .logs
             .iter()
             .filter_map(|e| match &e {
-                avail_subxt::config::substrate::DigestItem::Consensus(
-                    [b'F', b'R', b'N', b'K'],
-                    data,
-                ) => match ConsensusLog::<u32>::decode(&mut data.as_slice()) {
-                    Ok(ConsensusLog::ScheduledChange(x)) => Some(x.next_authorities),
-                    Ok(ConsensusLog::ForcedChange(_, x)) => Some(x.next_authorities),
-                    _ => None,
-                },
+                DigestItem::Consensus([b'F', b'R', b'N', b'K'], data) => {
+                    match ConsensusLog::<u32>::decode(&mut data.as_slice()) {
+                        Ok(ConsensusLog::ScheduledChange(x)) => Some(x.next_authorities),
+                        Ok(ConsensusLog::ForcedChange(_, x)) => Some(x.next_authorities),
+                        _ => None,
+                    }
+                }
                 _ => None,
             })
             .collect::<Vec<_>>();
@@ -541,6 +550,20 @@ impl RpcDataFetcher {
     }
 }
 
+pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
+    let from_token: String = env::var("ASSET_TO_USD_CONVERSION").unwrap_or("ethereum".to_string());
+    let coingeko_url =
+        env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
+    let coingeko_api_key = env::var("COINGEKO_API_KEY").expect("Missing COINGEKO_API_KEY env");
+    let price_endpoint = format!(
+        "{}/v3/simple/price?ids={}&vs_currencies={}&x_cg_api_key={}",
+        coingeko_url, from_token, "usd", coingeko_api_key
+    );
+    let response = reqwest::get(price_endpoint).await.unwrap();
+
+    Ok(response.json::<CoingekoApiResponse>().await?)
+}
+
 /// Converts GrandpaJustification and validator set to CircuitJustification.
 pub fn convert_justification_and_valset_to_circuit(
     justification: GrandpaJustification,
@@ -586,10 +609,9 @@ fn get_merkle_tree_size(num_headers: u32) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{Commit, Precommit, SignerMessage};
-    use avail_subxt::config::Header;
-    use avail_subxt::primitives::Header as DaHeader;
-    use ed25519::Public;
+    use crate::types::SignerMessage;
+    use avail_subxt::ext::avail_rust_core::grandpa::{Commit, Precommit};
+    use avail_subxt::AvailHeader;
     use serde::{Deserialize, Serialize};
     use sp1_vector_primitives::{
         rotate::get_next_validator_pubkeys_from_epoch_end_header, verify_justification,
@@ -683,7 +705,7 @@ mod tests {
     pub struct JsonGrandpaJustification {
         pub round: u64,
         pub commit: Commit,
-        pub votes_ancestries: Vec<DaHeader>,
+        pub votes_ancestries: Vec<AvailHeader>,
     }
 
     impl From<GrandpaJustification> for JsonGrandpaJustification {
@@ -719,7 +741,7 @@ mod tests {
     }
 
     #[test_case("test_assets/ancestry.json"; "Complex ancestry")]
-    #[test_case("test_assets/ancestry_missing_link_no_majority.json" => panics "Less than 2/3 of signatures are verified"; "Missing ancestor negative case")]
+    #[test_case("test_assets/ancestry_missing_link_no_majority.json" => panics "More than 2/3 of signatures are not verifie!"; "Missing ancestor negative case")]
     #[test_case("test_assets/ancestry_missing_link_works.json"; "Missing ancestor")]
     /// Tesing some complex justifications, serialized in JSON format (for readability)
     fn test_complex_justification(path: &str) {

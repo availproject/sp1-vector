@@ -1,6 +1,6 @@
 {
-  "name": "@succinctlabs/vectorx-query",
-  "version": "0.1.0",
+  "name": "@availproject/vectorx-query",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "scripts": {

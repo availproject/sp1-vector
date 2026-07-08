@@ -7,12 +7,6 @@ This directory contains the VectorX services, including the justification indexe
 ### Indexer (`bin/indexer.rs`)
 The main indexer service that listens for Avail justifications and stores them in PostgreSQL.
 
-### Migration Tool (`bin/migrate_dynamodb_to_postgres.rs`)
-A utility to migrate existing data from DynamoDB to PostgreSQL.
-
-## Database Migration
-
-The services have been migrated from DynamoDB to PostgreSQL. See [DATABASE_MIGRATION.md](./DATABASE_MIGRATION.md) for detailed information.
 
 ## Environment Variables
 
@@ -24,12 +18,6 @@ DATABASE_URL=postgresql://myuser:mypassword@localhost:5432/vectorx-indexer
 # Avail configuration
 AVAIL_URL=wss://...
 AVAIL_CHAIN_ID=mainnet
-```
-
-### Optional (for data migration)
-```bash
-# AWS (if migrating existing DynamoDB data)
-AWS_REGION=us-east-1
 ```
 
 ## Setup
@@ -44,6 +32,12 @@ AWS_REGION=us-east-1
    createdb vectorx-indexer
    psql -d vectorx-indexer -f migrations/001_create_justifications_table.sql
    ```
+   
+   OR
+   
+   ```
+   DATABASE_URL="<PSQL_CONN_STRING>" sqlx migrate run
+   ```
 
 3. **Configure environment variables** (see above)
 
@@ -51,14 +45,6 @@ AWS_REGION=us-east-1
    ```bash
    cargo run --bin indexer
    ```
-
-## Data Migration
-
-If you have existing DynamoDB data, use the migration tool:
-
-```bash
-cargo run --bin migrate_dynamodb_to_postgres
-```
 
 ## Testing
 

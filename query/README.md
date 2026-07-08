@@ -73,4 +73,4 @@ npm run dev
 
 ## Migration from DynamoDB
 
-If you have existing DynamoDB data, you'll need to write a migration script to transfer the data to PostgreSQL. The data structure should be compatible, but the storage format has changed from DynamoDB's attribute-value format to PostgreSQL's JSONB format. 
+If you have existing DynamoDB data, you'll need to write a migration script to transfer the data to PostgreSQL. The data structure should be compatible, but the storage format has changed from DynamoDB's attribute-value format to PostgreSQL's JSONB format.

@@ -1,8 +1,5 @@
-use std::env;
-use std::time::Duration;
-use std::{cmp::min, collections::HashMap};
-
 use alloy::network::{ReceiptResponse, TransactionBuilder};
+use alloy::primitives::utils::Unit;
 use alloy::signers::local::PrivateKeySigner;
 use alloy::{
     network::Network,
@@ -11,22 +8,29 @@ use alloy::{
     sol,
 };
 use futures::future::{join_all, try_join_all};
+use std::env;
+use std::ops::{Div, Mul};
+use std::str::FromStr;
+use std::time::Duration;
+use std::{cmp::min, collections::HashMap};
+use tokio::time::sleep;
 
-use anyhow::{Context, Result};
-use services::input::{HeaderRangeRequestData, RpcDataFetcher};
-use sp1_sdk::NetworkProver;
-use sp1_sdk::{
-    network::FulfillmentStrategy, Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey,
-    SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
-};
-
-use tracing::{debug, error, info, instrument};
-use tracing_subscriber::EnvFilter;
-
+use anyhow::{bail, Context, Result};
+use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
+use sp1_sdk::env::{EnvProver, EnvProvingKey};
+use sp1_sdk::network::FulfillmentStrategy;
+use sp1_sdk::{
+    Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+    SP1Stdin, SP1VerifyingKey,
+};
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
 use sp1_vectorx_script::SP1_VECTOR_ELF;
+use tracing::level_filters::LevelFilter;
+use tracing::{debug, error, info, instrument, warn};
+use tracing_subscriber::layer::SubscriberExt;
+use tracing_subscriber::util::SubscriberInitExt;
 
 use config::{ChainConfig, SignerMode};
 
@@ -35,6 +39,7 @@ use config::{ChainConfig, SignerMode};
 ////////////////////////////////////////////////////////////
 
 // If the SP1 proof takes too long to respond, time out.
+// timeout available only for sp1 network
 const PROOF_TIMEOUT_SECS: u64 = 60 * 30;
 
 // If the operator takes too long to run, time out.
@@ -76,12 +81,12 @@ sol! {
 type SP1VectorInstance<P, N> = SP1Vector::SP1VectorInstance<P, N>;
 
 struct SP1VectorOperator<P, N> {
-    pk: SP1ProvingKey,
+    pk: EnvProvingKey,
     vk: SP1VerifyingKey,
     signer_mode: SignerMode,
     tree_size: Option<u32>,
     fetcher: RpcDataFetcher,
-    prover: NetworkProver,
+    prover: EnvProver,
     contracts: HashMap<u64, SP1VectorInstance<P, N>>,
 }
 
@@ -111,7 +116,7 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::builder().network().build().await;
+        let prover = ProverClient::from_env().await;
         let pk = prover
             .setup(Elf::Static(SP1_VECTOR_ELF))
             .await
@@ -196,21 +201,44 @@ where
         );
 
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        if let Ok(prover_type) = env::var("SP1_PROVER") {
-            if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build().await;
-                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
-                return Ok(proof);
-            }
-        }
+        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
+        let proof = if mock {
+            info!("Using mock proof to insert header range proof.");
+            let prover_client = ProverClient::builder().mock().build().await;
+            let mock_pk = prover_client
+                .setup(Elf::Static(SP1_VECTOR_ELF))
+                .await
+                .expect("failed to setup mock prover");
+            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
+            Ok(proof)
+        } else {
+            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
+            return if spn {
+                info!("Using spn proof to insert header range proof.");
 
-        self.prover
-            .prove(&self.pk, stdin)
-            .strategy(FulfillmentStrategy::Auction)
-            .skip_simulation(true)
-            .plonk()
-            .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .await
+                let spn_client = ProverClient::builder().network().build().await;
+                let balance = spn_client.get_balance().await?;
+                info!(message = "Available balance", balance = balance.to_string());
+
+                let network_pk = spn_client
+                    .setup(Elf::Static(SP1_VECTOR_ELF))
+                    .await
+                    .expect("failed to setup network prover");
+                let proof = spn_client
+                    .prove(&network_pk, stdin)
+                    .strategy(FulfillmentStrategy::Auction)
+                    .min_auction_period(10)
+                    .plonk()
+                    .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
+                    .await;
+                proof
+            } else {
+                info!("Using env defined client insert header range proof.");
+                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
+                proof
+            };
+        };
+        proof
     }
 
     // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
@@ -448,21 +476,52 @@ where
         );
 
         // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        if let Ok(prover_type) = env::var("SP1_PROVER") {
-            if prover_type == "mock" {
-                let prover_client = ProverClient::builder().mock().build().await;
-                let proof = prover_client.prove(&self.pk, stdin).plonk().await?;
-                return Ok(proof);
-            }
-        }
+        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
+        let proof = if mock {
+            info!(
+                "Using mock proof to add authority set {}.",
+                current_authority_set_id
+            );
+            let prover_client = ProverClient::builder().mock().build().await;
+            let mock_pk = prover_client
+                .setup(Elf::Static(SP1_VECTOR_ELF))
+                .await
+                .expect("failed to setup mock prover");
+            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
+            Ok(proof)
+        } else {
+            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
+            return if spn {
+                info!(
+                    "Using spn proof to add authority set {}.",
+                    current_authority_set_id
+                );
+                let spn_client = ProverClient::builder().network().build().await;
+                let balance = spn_client.get_balance().await?;
+                info!(message = "Available balance", balance = balance.to_string());
 
-        self.prover
-            .prove(&self.pk, stdin)
-            .strategy(FulfillmentStrategy::Auction)
-            .skip_simulation(true)
-            .plonk()
-            .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-            .await
+                let network_pk = spn_client
+                    .setup(Elf::Static(SP1_VECTOR_ELF))
+                    .await
+                    .expect("failed to setup network prover");
+                let proof = spn_client
+                    .prove(&network_pk, stdin)
+                    .strategy(FulfillmentStrategy::Auction)
+                    .min_auction_period(10)
+                    .plonk()
+                    .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
+                    .await;
+                proof
+            } else {
+                info!(
+                    "Using env defined client to add authority set {}.",
+                    current_authority_set_id
+                );
+                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
+                proof
+            };
+        };
+        proof
     }
 
     // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
@@ -739,6 +798,61 @@ where
         }
     }
 
+    async fn submit_proof(
+        &self,
+        chain_id: u64,
+        tx: N::TransactionRequest,
+    ) -> Result<N::ReceiptResponse> {
+        let contract = self
+            .contracts
+            .get(&chain_id)
+            .expect("No contract for chain id");
+
+        let receipt = contract
+            .provider()
+            .send_transaction(tx)
+            .await?
+            .with_required_confirmations(NUM_CONFIRMATIONS)
+            .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
+            .get_receipt()
+            .await?;
+
+        if !receipt.status() {
+            return Err(anyhow::anyhow!("Transaction reverted!"));
+        }
+        Ok(receipt)
+    }
+
+    async fn estimate_effective_usd_gas_fee(
+        &self,
+        chain_id: u64,
+        tx: &N::TransactionRequest,
+    ) -> Result<f64> {
+        let contract = self
+            .contracts
+            .get(&chain_id)
+            .expect("No contract for chain id");
+
+        let wei: f64 = Unit::ETHER.wei_const().to::<u64>() as f64;
+        let gas_estimate: f64 = contract.provider().estimate_gas(tx.clone()).await? as f64;
+
+        let max_fee_per_gas = contract
+            .provider()
+            .estimate_eip1559_fees()
+            .await?
+            .max_fee_per_gas as f64;
+        let effective_gas_estimate = gas_estimate.mul(max_fee_per_gas).div(wei);
+        let usd_estimate = convert_to_usd_gas_fee(effective_gas_estimate).await?;
+        info!(
+            message = "Gas estimate",
+            gas_estimate = gas_estimate,
+            effective_gas_estimate = effective_gas_estimate,
+            max_fee_per_gas = max_fee_per_gas,
+            usd_estimate = round_to_decimals(usd_estimate, 2)
+        );
+        Ok(round_to_decimals(usd_estimate, 6))
+    }
+
     /// Relay a transaction to the given chain id.
     ///
     /// NOTE: Assumes the provider has a wallet.
@@ -757,27 +871,101 @@ where
                 NUM_RELAY_RETRIES,
             )
             .await
+        } else if matches!(chain_id, 1) {
+            let (
+                max_estimate_retries,
+                retry_sleep_interval,
+                target_usd_fee_threshold,
+                max_usd_fee_threshold,
+            ) = get_retry_envs()?;
+
+            let mut attempt: u8 = 0;
+            let mut last_estimates: Vec<f64> = vec![];
+
+            let tx_hash: B256 = loop {
+                let effective_gas_estimate = self
+                    .estimate_effective_usd_gas_fee(chain_id, &tx)
+                    .await
+                    .expect("Fail to estimate USD gas fees");
+
+                last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
+
+                // 1. If the price is acceptable let's just send it, no questions asked.
+                if effective_gas_estimate <= target_usd_fee_threshold {
+                    let tx_hash = self
+                        .submit_proof_with_info(chain_id, &tx, last_estimates.last().cloned())
+                        .await?;
+                    break tx_hash;
+                }
+
+                info!(
+                    message = "USD Gas fee too high!!",
+                    usd_estimate = round_to_decimals(effective_gas_estimate, 2)
+                );
+
+                warn!(
+                    message = "Failed to match send proof condition",
+                    gas_estimate = effective_gas_estimate,
+                    attempts = attempt
+                );
+
+                // 2. Otherwise let's wait and see if the price will go down later. Do this
+                // for [`max_estimate_retries`] times
+                if attempt < max_estimate_retries {
+                    warn!(message = "Retrying...",);
+                    sleep(Duration::from_secs(retry_sleep_interval)).await;
+                    attempt += 1;
+                    continue;
+                }
+
+                warn!(message = "Exhausted all retires. Checking one more time but this time with a higher threshold",);
+
+                // 3. If we reached the maximum number of retires we should check one more time,
+                // but this time with a higher threshold. If the higher threshold doesn't help
+                // then we need to bail out. Sorry
+                if effective_gas_estimate <= max_usd_fee_threshold {
+                    let tx_hash = self
+                        .submit_proof_with_info(chain_id, &tx, last_estimates.last().cloned())
+                        .await?;
+                    break tx_hash;
+                }
+
+                // If we are here it means that we have exhausted all the retires and everything.
+                // There is nothing that we can do now. :(
+                warn!(message = "Exhausted all options. Failed to submit proof. Exiting loop");
+                bail!("Failed to match send proof condition");
+            };
+
+            return Ok(tx_hash);
         } else {
-            let contract = self
-                .contracts
-                .get(&chain_id)
-                .expect("No contract for chain id");
-
-            let receipt = contract
-                .provider()
-                .send_transaction(tx)
-                .await?
-                .with_required_confirmations(NUM_CONFIRMATIONS)
-                .with_timeout(Some(Duration::from_secs(RELAY_TIMEOUT_SECONDS)))
-                .get_receipt()
-                .await?;
-
-            if !receipt.status() {
-                return Err(anyhow::anyhow!("Transaction reverted!"));
-            }
-
+            let receipt = self.submit_proof(chain_id, tx).await?;
             Ok(receipt.transaction_hash())
         }
+    }
+
+    async fn submit_proof_with_info(
+        &self,
+        chain_id: u64,
+        tx: &N::TransactionRequest,
+        last_estimates: Option<f64>,
+    ) -> Result<B256> {
+        let receipt = self.submit_proof(chain_id, tx.clone()).await?;
+        let wei = Unit::ETHER.wei_const().to::<u128>() as f64;
+        let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
+        let effective_gas_used = effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
+
+        let eth_to_usd_rate = fetch_usd_rate().await?;
+        let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
+
+        info!(
+            message = "Transaction gas fee used",
+            gas_fee = effective_gas_used,
+            usd_fee = usd_fee,
+            tx_hash = %receipt.transaction_hash(),
+            last_usd_gas_estimates = ?last_estimates
+        );
+
+        Ok(receipt.transaction_hash())
     }
 
     /// Check the verifying key in the contract matches the
@@ -833,40 +1021,31 @@ where
     }
 
     // Run the operator, indefinitely.
-    async fn run(self) {
-        let loop_interval = Duration::from_secs(get_loop_interval_mins() * 60);
-        let error_interval = Duration::from_secs(10);
+    async fn run(self) -> Result<()> {
+        let job_interval = Duration::from_secs(get_job_interval_mins() * 60);
 
-        loop {
-            tokio::select! {
-                res = self.run_once() => {
-                    if let Err(e) = res {
-                        error!("Error during `run_once`: {:?}", e);
-                        // Sleep for less time if theres an error.
-                        tokio::time::sleep(error_interval).await;
-                        continue;
-                    }
-                },
-                _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
-                    continue;
+        tokio::select! {
+            res = self.run_once() => {
+                if let Err(e) = res {
+                    error!("Error during `run_once`: {:?}", e);
+                    return Err(anyhow::anyhow!("Error during `run_once`"));
                 }
+            },
+            _ = tokio::time::sleep(Duration::from_secs(LOOP_TIMEOUT_MINS * 60)) => {
+                return Err(anyhow::anyhow!("Timed out after {:?} minutes", LOOP_TIMEOUT_MINS));
             }
-
-            tracing::info!(
-                "Operator ran successfully, sleeping for {} seconds",
-                loop_interval.as_secs()
-            );
-
-            // Sleep for the loop interval.
-            tokio::time::sleep(loop_interval).await;
         }
+
+        info!("Sleeping for {:?} minutes", job_interval.as_secs() / 60);
+        Ok(())
     }
 }
 
-fn get_loop_interval_mins() -> u64 {
+// returns the interval of the job that triggers the operator
+fn get_job_interval_mins() -> u64 {
     let mut loop_interval_mins = 60;
-    if let Ok(loop_interval_mins_env) = env::var("LOOP_INTERVAL_MINS") {
-        loop_interval_mins = loop_interval_mins_env
+    if let Ok(job_interval_mins_env) = env::var("LOOP_INTERVAL_MINS") {
+        loop_interval_mins = job_interval_mins_env
             .parse::<u64>()
             .expect("invalid LOOP_INTERVAL_MINS");
     }
@@ -883,13 +1062,55 @@ fn get_block_update_interval() -> u32 {
     block_update_interval
 }
 
+fn get_retry_envs() -> Result<(u8, u64, f64, f64)> {
+    let max_estimate_retries: u8 = env::var("MAX_ESTIMATE_RETRIES")
+        .unwrap_or("5".to_string())
+        .parse()?;
+
+    let retry_sleep_interval: u64 = env::var("RETRY_SLEEP_INTERVAL")
+        .unwrap_or("60".to_string())
+        .parse()?;
+
+    let target_usd_fee_threshold: f64 = env::var("TARGET_USD_FEE_THRESHOLD")
+        .unwrap_or("2.00".to_string())
+        .parse()?;
+
+    let max_usd_fee_threshold: f64 = env::var("MAX_USD_FEE_THRESHOLD")
+        .unwrap_or("30.00".to_string())
+        .parse()?;
+
+    Ok((
+        max_estimate_retries,
+        retry_sleep_interval,
+        target_usd_fee_threshold,
+        max_usd_fee_threshold,
+    ))
+}
+
+fn round_to_decimals(value: f64, decimals: u32) -> f64 {
+    let factor = 10f64.powi(decimals as i32);
+    (value * factor).round() / factor
+}
+
+async fn convert_to_usd_gas_fee(gas_fee: f64) -> Result<f64> {
+    let eth_to_usd_rate = fetch_usd_rate().await?;
+    Ok(gas_fee * eth_to_usd_rate.from_asset.to_asset)
+}
+
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    tracing_subscriber::fmt::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::from_env("info")),
+    let log_level = env::var("LOG_LEVEL").unwrap_or("info".to_string());
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_current_span(true)
+                .with_line_number(true)
+                .with_target(true),
         )
+        .with(LevelFilter::from_str(&log_level)?)
         .init();
 
     let signer_mode = env::var("SIGNER_MODE")
@@ -897,13 +1118,15 @@ async fn main() {
         .unwrap_or(SignerMode::Local);
     let config = ChainConfig::fetch().expect("Failed to fetch chain config");
 
-    match signer_mode {
+    let run_result = match signer_mode {
         SignerMode::Local => run_with_signer(config).await,
         SignerMode::Kms => run_with_kms(config).await,
-    }
+    };
+
+    run_result
 }
 
-async fn run_with_signer(config: Vec<ChainConfig>) {
+async fn run_with_signer(config: Vec<ChainConfig>) -> Result<()> {
     let mut operator = SP1VectorOperator::new(SignerMode::Local).await;
 
     let signer: PrivateKeySigner = env::var("PRIVATE_KEY")
@@ -922,7 +1145,7 @@ async fn run_with_signer(config: Vec<ChainConfig>) {
     operator.run().await
 }
 
-async fn run_with_kms(config: Vec<ChainConfig>) {
+async fn run_with_kms(config: Vec<ChainConfig>) -> Result<()> {
     let mut operator = SP1VectorOperator::new(SignerMode::Kms).await;
 
     for c in config {
