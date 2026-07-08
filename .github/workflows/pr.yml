@@ -29,6 +29,11 @@ jobs:
           toolchain: stable
           components: rustfmt
 
+      - name: Install protoc
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler
+
       - name: Run rustfmt
         run: cargo fmt --all -- --check
         env:
@@ -61,7 +66,7 @@ jobs:
         run: |
           # Build the binaries
           cd program
-          ~/.sp1/bin/cargo-prove prove build --elf-name vector-elf --docker --tag v5.0.0 --output-directory ../elf
+          ~/.sp1/bin/cargo-prove prove build --elf-name vector-elf --docker --tag v6.3.1 --output-directory ../elf
           cd ../
           # Check for any changes in the elf directory
           if [ -n "$(git status --porcelain elf/)" ]; then

@@ -610,7 +610,7 @@ fn get_merkle_tree_size(num_headers: u32) -> usize {
 #[cfg(test)]
 mod tests {
     use crate::types::SignerMessage;
-    use avail_subxt::ext::avail_rust_core::grandpa::{AuthorityId, Commit, Precommit};
+    use avail_subxt::ext::avail_rust_core::grandpa::{Commit, Precommit};
     use avail_subxt::AvailHeader;
     use serde::{Deserialize, Serialize};
     use sp1_vector_primitives::{

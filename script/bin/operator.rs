@@ -18,10 +18,11 @@ use tokio::time::sleep;
 use anyhow::{bail, Context, Result};
 use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
 use services::Timeout;
+use sp1_sdk::env::{EnvProver, EnvProvingKey};
 use sp1_sdk::network::FulfillmentStrategy;
-use sp1_sdk::EnvProver;
 use sp1_sdk::{
-    HashableKey, ProverClient, SP1ProofWithPublicValues, SP1ProvingKey, SP1Stdin, SP1VerifyingKey,
+    Elf, HashableKey, ProveRequest, Prover, ProverClient, ProvingKey, SP1ProofWithPublicValues,
+    SP1Stdin, SP1VerifyingKey,
 };
 use sp1_vector_primitives::types::ProofType;
 use sp1_vectorx_script::relay::{self};
@@ -80,7 +81,7 @@ sol! {
 type SP1VectorInstance<P, N> = SP1Vector::SP1VectorInstance<P, N>;
 
 struct SP1VectorOperator<P, N> {
-    pk: SP1ProvingKey,
+    pk: EnvProvingKey,
     vk: SP1VerifyingKey,
     signer_mode: SignerMode,
     tree_size: Option<u32>,
@@ -115,8 +116,12 @@ where
     async fn new(signer_mode: SignerMode) -> Self {
         dotenv::dotenv().ok();
 
-        let prover = ProverClient::from_env();
-        let (pk, vk) = prover.setup(SP1_VECTOR_ELF);
+        let prover = ProverClient::from_env().await;
+        let pk = prover
+            .setup(Elf::Static(SP1_VECTOR_ELF))
+            .await
+            .expect("failed to setup prover");
+        let vk = pk.verifying_key().clone();
 
         Self {
             fetcher: RpcDataFetcher::new().await,
@@ -148,15 +153,15 @@ where
             .expect("Failed to get chain id");
 
         // Register the first tree size.
-        if self.tree_size.is_none() {
-            self.tree_size = Some(tree_size);
-        } else if self.tree_size.unwrap() != tree_size {
-            panic!(
-                "Tree size mismatch! Expected {}, got {} for chain id {}",
-                self.tree_size.unwrap(),
-                tree_size,
-                chain_id
-            );
+        match self.tree_size {
+            None => self.tree_size = Some(tree_size),
+            Some(existing) if existing != tree_size => {
+                panic!(
+                    "Tree size mismatch! Expected {}, got {} for chain id {}",
+                    existing, tree_size, chain_id
+                );
+            }
+            Some(_) => {}
         }
 
         self.contracts.insert(chain_id, contract);
@@ -199,30 +204,37 @@ where
         let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
         let proof = if mock {
             info!("Using mock proof to insert header range proof.");
-            let prover_client = ProverClient::builder().mock().build();
-            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            let prover_client = ProverClient::builder().mock().build().await;
+            let mock_pk = prover_client
+                .setup(Elf::Static(SP1_VECTOR_ELF))
+                .await
+                .expect("failed to setup mock prover");
+            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
             Ok(proof)
         } else {
             let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
             return if spn {
                 info!("Using spn proof to insert header range proof.");
 
-                let spn_client = ProverClient::builder().network().build();
+                let spn_client = ProverClient::builder().network().build().await;
                 let balance = spn_client.get_balance().await?;
                 info!(message = "Available balance", balance = balance.to_string());
 
+                let network_pk = spn_client
+                    .setup(Elf::Static(SP1_VECTOR_ELF))
+                    .await
+                    .expect("failed to setup network prover");
                 let proof = spn_client
-                    .prove(&self.pk, &stdin)
+                    .prove(&network_pk, stdin)
                     .strategy(FulfillmentStrategy::Auction)
                     .min_auction_period(10)
                     .plonk()
                     .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .run_async()
                     .await;
                 proof
             } else {
                 info!("Using env defined client insert header range proof.");
-                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
+                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
                 proof
             };
         };
@@ -470,8 +482,12 @@ where
                 "Using mock proof to add authority set {}.",
                 current_authority_set_id
             );
-            let prover_client = ProverClient::builder().mock().build();
-            let proof = prover_client.prove(&self.pk, &stdin).plonk().run()?;
+            let prover_client = ProverClient::builder().mock().build().await;
+            let mock_pk = prover_client
+                .setup(Elf::Static(SP1_VECTOR_ELF))
+                .await
+                .expect("failed to setup mock prover");
+            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
             Ok(proof)
         } else {
             let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
@@ -480,17 +496,20 @@ where
                     "Using spn proof to add authority set {}.",
                     current_authority_set_id
                 );
-                let spn_client = ProverClient::builder().network().build();
+                let spn_client = ProverClient::builder().network().build().await;
                 let balance = spn_client.get_balance().await?;
                 info!(message = "Available balance", balance = balance.to_string());
 
+                let network_pk = spn_client
+                    .setup(Elf::Static(SP1_VECTOR_ELF))
+                    .await
+                    .expect("failed to setup network prover");
                 let proof = spn_client
-                    .prove(&self.pk, &stdin)
+                    .prove(&network_pk, stdin)
                     .strategy(FulfillmentStrategy::Auction)
                     .min_auction_period(10)
                     .plonk()
                     .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .run_async()
                     .await;
                 proof
             } else {
@@ -498,7 +517,7 @@ where
                     "Using env defined client to add authority set {}.",
                     current_authority_set_id
                 );
-                let proof = self.prover.prove(&self.pk, &stdin).plonk().run();
+                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
                 proof
             };
         };
@@ -1024,11 +1043,9 @@ where
 
 // returns the interval of the job that triggers the operator
 fn get_job_interval_mins() -> u64 {
-    let job_interval_mins_env = env::var("LOOP_INTERVAL_MINS");
     let mut loop_interval_mins = 60;
-    if job_interval_mins_env.is_ok() {
+    if let Ok(job_interval_mins_env) = env::var("LOOP_INTERVAL_MINS") {
         loop_interval_mins = job_interval_mins_env
-            .unwrap()
             .parse::<u64>()
             .expect("invalid LOOP_INTERVAL_MINS");
     }
@@ -1036,11 +1053,9 @@ fn get_job_interval_mins() -> u64 {
 }
 
 fn get_block_update_interval() -> u32 {
-    let block_update_interval_env = env::var("BLOCK_UPDATE_INTERVAL");
     let mut block_update_interval = 360;
-    if block_update_interval_env.is_ok() {
+    if let Ok(block_update_interval_env) = env::var("BLOCK_UPDATE_INTERVAL") {
         block_update_interval = block_update_interval_env
-            .unwrap()
             .parse::<u32>()
             .expect("invalid BLOCK_UPDATE_INTERVAL");
     }
@@ -1064,12 +1079,12 @@ fn get_retry_envs() -> Result<(u8, u64, f64, f64)> {
         .unwrap_or("30.00".to_string())
         .parse()?;
 
-    return Ok((
+    Ok((
         max_estimate_retries,
         retry_sleep_interval,
         target_usd_fee_threshold,
         max_usd_fee_threshold,
-    ));
+    ))
 }
 
 fn round_to_decimals(value: f64, decimals: u32) -> f64 {
