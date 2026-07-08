@@ -42,14 +42,14 @@ contract DeployScript is BaseScript {
         bytes32 genesisAuthoritySetHash = vm.envBytes32("GENESIS_AUTHORITY_SET_HASH");
         uint32 headerRangeCommitmentTreeSize = uint32(vm.envUint("HEADER_RANGE_COMMITMENT_TREE_SIZE"));
         bytes32 vectorProgramVkey = vm.envBytes32("SP1_VECTOR_PROGRAM_VKEY");
+        address verifierAddress = vm.envAddress("SP1_VERIFIER_ADDRESS");
 
         // Read trusted initialization parameters from environment.
         address guardian = vm.envOr("GUARDIAN_ADDRESS", msg.sender);
 
-        ISP1Verifier verifier =
-            ISP1Verifier(vm.envOr("SP1_VERIFIER_ADDRESS", 0x3B6041173B80E77f038f3F2C0f9744f04837185e));
-        SP1Vector sp1VectorImpl = new SP1Vector();
-        // ERC1967Proxy proxy = new ERC1967Proxy{salt: vm.envBytes32("CREATE2_SALT")}(address(sp1VectorImpl), "");
+        ISP1Verifier verifier = ISP1Verifier(verifierAddress);
+        SP1Vector sp1VectorImpl = SP1Vector(new SP1Vector());
+        //ERC1967Proxy proxy = new ERC1967Proxy{salt: vm.envBytes32("CREATE2_SALT")}(address(sp1VectorImpl), "");
         ERC1967Proxy proxy = new ERC1967Proxy(address(sp1VectorImpl), "");
         sp1Vector = SP1Vector(address(proxy));
         sp1Vector.initialize(
