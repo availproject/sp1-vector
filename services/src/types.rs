@@ -1,9 +1,10 @@
-use avail_subxt::primitives::Header;
 use codec::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use sp_core::ed25519::{Public as EdPublic, Signature};
 use sp_core::Bytes;
 use sp_core::H256;
+
+use crate::avail::Header;
 
 #[derive(Clone, Debug, Decode, Encode, Serialize, Deserialize)]
 pub struct Precommit {
