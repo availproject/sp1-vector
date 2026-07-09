@@ -1,6 +1,8 @@
-# Builds the `indexer` bin from the `services` crate via docker/Dockerfile (BIN_MODE),
-# renamed to `vectorx-indexer`, and pushes to registry.digitalocean.com/availj.
-name: Release vectorx-indexer
+# Builds release images from docker/Dockerfile (BIN_MODE selects the bin) and pushes to
+# registry.digitalocean.com/availj:
+#   - indexer  (services crate) -> vectorx-indexer
+#   - operator (script crate)   -> vector-operator-job  (consumed by sp1-*-vector-fallback-job)
+name: Release vectorx images
 
 on:
   push:
@@ -15,13 +17,17 @@ on:
 
 jobs:
   docker_build_push:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: true
       matrix:
-        # The services crate currently exposes only the `indexer` bin.
-        # Add more here (e.g. operator) once they exist as [[bin]] targets.
-        binary: [indexer]
+        include:
+          # indexer bin (services crate) -> availj/vectorx-indexer
+          - binary: indexer
+            image: vectorx-indexer
+          # operator bin (script crate) -> availj/vector-operator-job
+          - binary: operator
+            image: vector-operator-job
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,7 +62,7 @@ jobs:
           platforms: linux/amd64
           push: true
           tags: |
-            ${{ steps.meta.outputs.do_registry }}/availj/vectorx-${{ matrix.binary }}:${{ steps.meta.outputs.tag_name }}
+            ${{ steps.meta.outputs.do_registry }}/availj/${{ matrix.image }}:${{ steps.meta.outputs.tag_name }}
           build-args: |
             BUILD_PROFILE=release
             BIN_MODE=${{ matrix.binary }}

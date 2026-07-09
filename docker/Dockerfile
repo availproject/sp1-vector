@@ -11,7 +11,7 @@ RUN apt update && apt install -y git make libssl-dev pkg-config libpq-dev \
 FROM ubuntu:22.04 AS run
 WORKDIR /app
 ARG BIN_MODE=indexer
-ENV BIN_MODE_ENV=indexer
+ENV BIN_MODE_ENV=$BIN_MODE
 
 COPY --from=builder /build/vectorx-$BIN_MODE /usr/local/bin
 
