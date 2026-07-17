@@ -2,7 +2,7 @@ use crate::types::{
     CoingekoApiResponse, EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse,
 };
 use alloy::primitives::{B256, B512};
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use codec::{Compact, Decode, Encode};
 use futures::future::join_all;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
@@ -550,18 +550,51 @@ impl RpcDataFetcher {
     }
 }
 
+/// Demo keys are only valid on the public host and pro keys on the pro-api host, each with its
+/// own query param name; unknown params are silently ignored and the request treated as anonymous.
+fn coingecko_price_endpoint(base_url: &str, from_token: &str, api_key: &str) -> String {
+    let api_key_param = if base_url.contains("pro-api") {
+        "x_cg_pro_api_key"
+    } else {
+        "x_cg_demo_api_key"
+    };
+    format!("{base_url}/v3/simple/price?ids={from_token}&vs_currencies=usd&{api_key_param}={api_key}")
+}
+
 pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
     let from_token: String = env::var("ASSET_TO_USD_CONVERSION").unwrap_or("ethereum".to_string());
     let coingeko_url =
         env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
-    let coingeko_api_key = env::var("COINGEKO_API_KEY").expect("Missing COINGEKO_API_KEY env");
-    let price_endpoint = format!(
-        "{}/v3/simple/price?ids={}&vs_currencies={}&x_cg_api_key={}",
-        coingeko_url, from_token, "usd", coingeko_api_key
-    );
-    let response = reqwest::get(price_endpoint).await.unwrap();
+    let coingeko_api_key = env::var("COINGEKO_API_KEY").context("Missing COINGEKO_API_KEY env")?;
 
-    Ok(response.json::<CoingekoApiResponse>().await?)
+    let price_endpoint = coingecko_price_endpoint(&coingeko_url, &from_token, &coingeko_api_key);
+    let response = reqwest::get(price_endpoint).await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        bail!("CoinGecko returned {status}: {body}");
+    }
+    serde_json::from_str(&body)
+        .with_context(|| format!("Unexpected CoinGecko response body: {body}"))
+}
+
+#[cfg(test)]
+mod coingecko_tests {
+    use super::coingecko_price_endpoint;
+
+    #[test]
+    fn demo_key_param_on_public_host() {
+        let url = coingecko_price_endpoint("https://api.coingecko.com/api", "ethereum", "CG-abc");
+        assert!(url.contains("x_cg_demo_api_key=CG-abc"), "{url}");
+        assert!(url.contains("ids=ethereum&vs_currencies=usd"), "{url}");
+    }
+
+    #[test]
+    fn pro_key_param_on_pro_host() {
+        let url =
+            coingecko_price_endpoint("https://pro-api.coingecko.com/api", "ethereum", "CG-abc");
+        assert!(url.contains("x_cg_pro_api_key=CG-abc"), "{url}");
+    }
 }
 
 /// Converts GrandpaJustification and validator set to CircuitJustification.
