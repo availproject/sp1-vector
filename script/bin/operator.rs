@@ -886,7 +886,7 @@ where
                 let effective_gas_estimate = self
                     .estimate_effective_usd_gas_fee(chain_id, &tx)
                     .await
-                    .expect("Fail to estimate USD gas fees");
+                    .context("Failed to estimate USD gas fees")?;
 
                 last_estimates.push(round_to_decimals(effective_gas_estimate, 2));
 
