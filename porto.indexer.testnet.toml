@@ -10,6 +10,7 @@ memory_limit   = "512Mi"
 [env]
 AVAIL_CHAIN_ID = "SET-BEFORE-DEPLOY"
 AVAIL_URL = "SET-BEFORE-DEPLOY"
+RUST_LOG = "info"
 
 [secrets]
 DATABASE_URL = "/bridge/testnet/vectorx-indexer/DATABASE_URL"
