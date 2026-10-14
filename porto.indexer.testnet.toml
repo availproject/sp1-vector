@@ -9,7 +9,7 @@ memory_limit   = "512Mi"
 
 [env]
 AVAIL_CHAIN_ID = "SET-BEFORE-DEPLOY"
-AVAIL_URL = "SET-BEFORE-DEPLOY"
+AVAIL_URL = "wss://infinity-turing-rpc.avail.so/ws"
 RUST_LOG = "info"
 
 [secrets]
