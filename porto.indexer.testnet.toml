@@ -8,7 +8,7 @@ memory_request = "128Mi"
 memory_limit   = "512Mi"
 
 [env]
-AVAIL_CHAIN_ID = "SET-BEFORE-DEPLOY"
+AVAIL_CHAIN_ID = "avail_infinity_turing"
 AVAIL_URL = "wss://infinity-turing-rpc.avail.so/ws"
 RUST_LOG = "info"
 
