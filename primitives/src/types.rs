@@ -59,8 +59,6 @@ pub struct RotateInputs {
 pub struct HeaderRotateData {
     /// Encoded header bytes for the epoch end block.
     pub header_bytes: Vec<u8>,
-    /// Index of the new authority set data in the header bytes.
-    pub consensus_log_position: usize,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]

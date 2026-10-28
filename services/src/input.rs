@@ -3,13 +3,13 @@ use crate::types::{
 };
 use alloy::primitives::{B256, B512};
 use anyhow::{bail, Context, Result};
-use codec::{Compact, Decode, Encode};
+use codec::{Decode, Encode};
 use futures::future::join_all;
+use sp1_vector_primitives::compute_authority_set_commitment;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
-use sp1_vector_primitives::{compute_authority_set_commitment, consts::HASH_SIZE};
 use std::cmp::Ordering;
 use std::env;
 use std::time::Duration;
@@ -470,9 +470,8 @@ impl RpcDataFetcher {
     }
 
     /// This function takes in a block_number as input, and fetches the new authority set specified
-    /// in the epoch end block. It returns the data necessary to prove the new authority set, which
-    /// specifies the new authority set hash, the number of authorities, and the start and end
-    /// position of the encoded new authority set in the header.
+    /// in the epoch end block. It returns the encoded epoch end header, which the circuit decodes to
+    /// find the new authority set.
     pub async fn get_header_rotate(&self, authority_set_id: u64) -> HeaderRotateData {
         let epoch_end_block = self.last_justified_block(authority_set_id).await;
         if epoch_end_block == 0 {
@@ -486,57 +485,14 @@ impl RpcDataFetcher {
         // Fetch the new authority set specified in the epoch end block.
         let expected_new_authorities = self.get_authorities(epoch_end_block).await;
 
-        let mut position = 0;
-        let number_encoded = Compact(epoch_end_block).encode();
-        // Skip past parent_hash, number, state_root, extrinsics_root.
-        position += HASH_SIZE + number_encoded.len() + HASH_SIZE + HASH_SIZE;
-        let mut found_correct_log = false;
-        for log in header.digest.logs {
-            let encoded_log = log.clone().encode();
-            // Note: Two bytes are skipped between the consensus id and value.
-            if let DigestItem::Consensus(consensus_id, value) = log {
-                if consensus_id == [70, 82, 78, 75] {
-                    // Decode the consensus log. Only if this is the correct log, will we continue.
-                    match ConsensusLog::<u32>::decode(&mut value.as_slice()) {
-                        Ok(ConsensusLog::ScheduledChange(_)) => {
-                            println!("Found ScheduledChange log!");
-                            found_correct_log = true;
-                        }
-                        Ok(ConsensusLog::ForcedChange(_, _)) => {
-                            println!("Found ForcedChange log!");
-                            found_correct_log = true;
-                        }
-                        _ => {
-                            position += encoded_log.len();
-                            continue;
-                        }
-                    }
-                    break;
-                }
-            }
-            // If this is not the correct log, increment position by the length of the encoded log.
-            if !found_correct_log {
-                position += encoded_log.len();
-            }
-        }
-
-        // Panic if there is not a consensus log.
-        if !found_correct_log {
-            panic!(
-                "Block: {:?} should be an epoch end block, but did not find corresponding consensus log!",
-                epoch_end_block
-            );
-        }
-
+        // Decode the header the same way the circuit does. This panics if the header has no
+        // GRANDPA ScheduledChange, for example when the set changed through a ForcedChange.
         let extracted_new_authorities =
-            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes, position);
+            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes);
 
         assert_eq!(extracted_new_authorities, expected_new_authorities);
 
-        HeaderRotateData {
-            header_bytes,
-            consensus_log_position: position,
-        }
+        HeaderRotateData { header_bytes }
     }
 }
 
@@ -729,11 +685,9 @@ mod tests {
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
         let rotate_data = fetcher.get_header_rotate(new_authority_set_id).await;
-        let new_authority_set_hash =
-            compute_authority_set_commitment(&get_next_validator_pubkeys_from_epoch_end_header(
-                &rotate_data.header_bytes,
-                rotate_data.consensus_log_position,
-            ));
+        let new_authority_set_hash = compute_authority_set_commitment(
+            &get_next_validator_pubkeys_from_epoch_end_header(&rotate_data.header_bytes),
+        );
         assert_eq!(new_authority_set_hash, expected_new_authority_set_hash);
     }
 
