@@ -116,20 +116,10 @@ impl RpcDataFetcher {
         header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
-        let num_headers =
-            header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
-        let merkle_tree_size: usize;
-        if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
-            assert!(
-                header_range_commitment_tree_size >= num_headers
-                    && header_range_commitment_tree_size.is_power_of_two(),
-                "Header range commitment tree size must be greater than or equal to the number of headers and a power of two"
-            );
-            merkle_tree_size = header_range_commitment_tree_size as usize;
-        } else {
-            // NOTE: DANGEROUS. ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
-            merkle_tree_size = get_merkle_tree_size(num_headers);
-        }
+        // The trusted header is not a leaf: the tree commits to (trusted_block, target_block].
+        let num_leaves =
+            header_range_request_data.target_block - header_range_request_data.trusted_block;
+        let merkle_tree_size = get_merkle_tree_size(num_leaves, header_range_commitment_tree_size);
 
         tracing::debug!(
             "Getting block headers range from {} to {}",
@@ -633,10 +623,21 @@ pub fn convert_justification_and_valset_to_circuit(
     }
 }
 
-/// NOTE: ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
-fn get_merkle_tree_size(num_headers: u32) -> usize {
+/// Check the tree size against the number of leaves, mirroring the circuit's check in
+/// `get_merkle_root_commitments`. Without a tree size, use the nearest power of 2.
+fn get_merkle_tree_size(num_leaves: u32, header_range_commitment_tree_size: Option<u32>) -> usize {
+    if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
+        assert!(
+            header_range_commitment_tree_size >= num_leaves
+                && header_range_commitment_tree_size.is_power_of_two(),
+            "Header range commitment tree size must be greater than or equal to the number of leaves and a power of two"
+        );
+        return header_range_commitment_tree_size as usize;
+    }
+
+    // NOTE: DANGEROUS. ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
     let mut size = 1;
-    while size < num_headers {
+    while size < num_leaves {
         size *= 2;
     }
     size as usize
@@ -655,6 +656,25 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+
+    #[test]
+    fn test_merkle_tree_size_accepts_full_range() {
+        // A range of tree_size blocks after the trusted block fills the tree exactly.
+        assert_eq!(get_merkle_tree_size(512, Some(512)), 512);
+        assert_eq!(get_merkle_tree_size(511, Some(512)), 512);
+    }
+
+    #[test]
+    #[should_panic(expected = "Header range commitment tree size")]
+    fn test_merkle_tree_size_rejects_overfull_range() {
+        get_merkle_tree_size(513, Some(512));
+    }
+
+    #[test]
+    fn test_merkle_tree_size_defaults_to_next_power_of_two() {
+        assert_eq!(get_merkle_tree_size(512, None), 512);
+        assert_eq!(get_merkle_tree_size(513, None), 1024);
+    }
 
     #[tokio::test]
     async fn test_get_simple_justification_change_authority_set() {
