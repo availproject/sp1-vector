@@ -3,6 +3,7 @@ pragma solidity ^0.8.0;
 
 import "forge-std/Test.sol";
 import {SP1Vector} from "../src/SP1Vector.sol";
+import {ISP1Vector} from "../src/interfaces/ISP1Vector.sol";
 import {TimelockedUpgradeable} from "@succinctx/upgrades/TimelockedUpgradeable.sol";
 import {ISP1Verifier} from "@sp1-contracts/ISP1Verifier.sol";
 import "forge-std/console.sol";
@@ -69,5 +70,68 @@ contract SP1VectorTest is Test {
             hex"0000000000000000000000000000000000000000000000000000000000000020000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000000180000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000000427e34c8dd5e52e2d3a01f0228070d6c6ec557304c1a71b21a8de344ed5f9de8588790000000000000000000000000000000000000000000000000000000000000054ba873a3572cc2e019a5ec10182716aea73325906882194b9d3a19fc0408834e80000000000000000000000000000000000000000000000000000000000042896bc4b14a9759ff3ba227179419129f719ee9ed33894e6a1f1edc300954f63f48b7f48a4428b18e80a47eaf92880dd048a79bd1d4161a3a5b5edb67b97c525972a13ab31250cb9b3890c436541c1fa081622b5117fdca36fe88a8ae8bf6d852bb00000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000";
         bytes memory proof = "";
         sp1Vector.commitHeaderRange(proof, publicValues);
+    }
+
+    uint32 constant TRUSTED_HEIGHT = 100;
+    bytes32 constant TRUSTED_HEADER = keccak256("TRUSTED_HEADER_100");
+    uint64 constant SET_ID = 10;
+    bytes32 constant SET_HASH = keccak256("SET_10");
+    uint32 constant TREE_SIZE = 512;
+
+    /// Deploys without .env, so the trusted-header tests run on their own.
+    function deployFixture() internal {
+        SP1Vector vectorImpl = new SP1Vector();
+        sp1Vector = SP1Vector(address(new ERC1967Proxy(address(vectorImpl), "")));
+        sp1Vector.initialize(
+            SP1Vector.InitParameters({
+                guardian: address(this),
+                height: TRUSTED_HEIGHT,
+                header: TRUSTED_HEADER,
+                authoritySetId: SET_ID,
+                authoritySetHash: SET_HASH,
+                headerRangeCommitmentTreeSize: TREE_SIZE,
+                vectorProgramVkey: keccak256("VKEY"),
+                verifier: address(new SP1MockVerifier())
+            })
+        );
+    }
+
+    function headerRangePublicValues(uint32 trustedBlock, bytes32 trustedHeader) internal pure returns (bytes memory) {
+        SP1Vector.HeaderRangeOutputs memory hro = SP1Vector.HeaderRangeOutputs({
+            trusted_block: trustedBlock,
+            trusted_header_hash: trustedHeader,
+            authority_set_id: SET_ID,
+            authority_set_hash: SET_HASH,
+            target_block: TRUSTED_HEIGHT + 10,
+            target_header_hash: keccak256("TARGET_HEADER_110"),
+            state_root_commitment: keccak256("STATE_ROOTS"),
+            data_root_commitment: keccak256("DATA_ROOTS"),
+            merkle_tree_size: TREE_SIZE
+        });
+        return abi.encode(
+            SP1Vector.ProofOutputs({
+                proofType: SP1Vector.ProofType.HeaderRangeProof, headerRangeOutputs: abi.encode(hro), rotateOutputs: ""
+            })
+        );
+    }
+
+    function test_HeaderRange_TrustedHeaderMatches() public {
+        deployFixture();
+        sp1Vector.commitHeaderRange("", headerRangePublicValues(TRUSTED_HEIGHT, TRUSTED_HEADER));
+        assertEq(sp1Vector.latestBlock(), TRUSTED_HEIGHT + 10);
+    }
+
+    function test_RevertHeaderRange_WrongTrustedHeader() public {
+        deployFixture();
+        bytes memory publicValues = headerRangePublicValues(TRUSTED_HEIGHT, keccak256("OTHER_HEADER_100"));
+        vm.expectRevert(ISP1Vector.TrustedHeaderMismatch.selector);
+        sp1Vector.commitHeaderRange("", publicValues);
+    }
+
+    function test_RevertHeaderRange_WrongTrustedBlock() public {
+        deployFixture();
+        bytes memory publicValues = headerRangePublicValues(TRUSTED_HEIGHT - 1, TRUSTED_HEADER);
+        vm.expectRevert(ISP1Vector.TrustedHeaderMismatch.selector);
+        sp1Vector.commitHeaderRange("", publicValues);
     }
 }
