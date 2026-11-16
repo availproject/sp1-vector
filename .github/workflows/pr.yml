@@ -8,6 +8,11 @@ on:
       - "**"
   merge_group:
 
+env:
+  # The Rust version that docker/Dockerfile builds the operator with. Keep the two in step.
+  # "stable" would move to each new release, and a new release can reject a dependency.
+  RUST_VERSION: "1.89.0"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
@@ -28,9 +33,14 @@ jobs:
       # because the runner's default toolchain lost rustfmt and its cargo could not read a
       # version 4 Cargo.lock.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
+          rustup default "$RUST_VERSION"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Run rustfmt
         run: cargo fmt --all -- --check
@@ -54,7 +64,14 @@ jobs:
       # SP1 toolchain (cargo-prove) is pre-installed on the self-hosted runner. cargo-prove calls
       # `cargo metadata` with the default toolchain, which must read a version 4 Cargo.lock.
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        run: |
+          export PATH="$HOME/.cargo/bin:$PATH"
+          if ! command -v rustup >/dev/null; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          rustup toolchain install "$RUST_VERSION" --profile minimal
+          rustup default "$RUST_VERSION"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Verify the SP1 Vector Binary
