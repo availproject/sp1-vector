@@ -30,15 +30,15 @@ async fn main() -> anyhow::Result<()> {
 
     let header;
     if let Some(block) = args.block {
-        header = fetcher.get_header(block).await;
+        header = fetcher.get_header(block).await?;
     } else {
-        header = fetcher.get_head().await;
+        header = fetcher.get_head().await?;
     }
     let header_hash = header.hash();
-    let authority_set_id = fetcher.get_authority_set_id(header.number).await;
+    let authority_set_id = fetcher.get_authority_set_id(header.number).await?;
     let authority_set_hash = fetcher
         .compute_authority_set_hash_for_block(header.number)
-        .await;
+        .await?;
 
     struct GenesisOutput {
         genesis_height: u32,

@@ -6,7 +6,7 @@ use alloy::network::Network;
 use alloy::primitives::B256;
 use alloy::providers::Provider;
 use alloy::transports::http::Client;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
@@ -86,7 +86,7 @@ pub async fn relay_with_kms(args: &KMSRelayRequest, num_retries: u32) -> Result<
             _ => {
                 let error_message = response
                     .message
-                    .expect("KMS request always returns a message");
+                    .unwrap_or_else(|| format!("status {} without a message", response.status));
                 tracing::warn!("KMS relay attempt {} failed: {}", attempt, error_message);
                 if attempt == num_retries {
                     return Err(anyhow::anyhow!(
@@ -105,8 +105,10 @@ pub async fn relay_with_kms(args: &KMSRelayRequest, num_retries: u32) -> Result<
 async fn send_kms_relay_request(args: &KMSRelayRequest) -> Result<KMSRelayResponse> {
     info!("Sending KMS relay request: {:?}", args);
     // Read relayer endpoint from env
-    let relayer_endpoint = env::var("SECURE_RELAYER_ENDPOINT").unwrap();
-    let api_key = env::var("SECURE_RELAYER_API_KEY").unwrap();
+    let relayer_endpoint =
+        env::var("SECURE_RELAYER_ENDPOINT").context("SECURE_RELAYER_ENDPOINT must be set")?;
+    let api_key =
+        env::var("SECURE_RELAYER_API_KEY").context("SECURE_RELAYER_API_KEY must be set")?;
 
     let client = Client::new();
     let response = client
@@ -115,8 +117,14 @@ async fn send_kms_relay_request(args: &KMSRelayRequest) -> Result<KMSRelayRespon
         .json(&json!(args))
         .timeout(Duration::from_secs(90))
         .send()
-        .await?;
-    let response_body = response.text().await?;
+        .await
+        .map_err(|e| e.without_url())
+        .context("The KMS relay request failed")?;
+    let response_body = response
+        .text()
+        .await
+        .map_err(|e| e.without_url())
+        .context("Failed to read the KMS relay response")?;
     let response_json: KMSRelayResponse = serde_json::from_str(&response_body)?;
     Ok(response_json)
 }
