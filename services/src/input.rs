@@ -151,9 +151,10 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> RotateInputs {
-        let justification = self
-            .get_justification_data_epoch_end_block(authority_set_id)
-            .await;
+        let justification = keep_precommits_on_target(
+            self.get_justification_data_epoch_end_block(authority_set_id)
+                .await,
+        );
 
         let header_rotate_data = self.get_header_rotate(authority_set_id).await;
 
@@ -579,6 +580,20 @@ pub fn convert_justification_and_valset_to_circuit(
     }
 }
 
+/// Keep only the precommits on the justified block itself, and drop the ancestries.
+///
+/// A precommit can target a descendant of the justified block. The justification then carries the
+/// headers that link the two, and the rotate circuit rejects every justification with ancestries.
+/// The circuit still requires a supermajority, so the remaining precommits must reach it alone.
+pub fn keep_precommits_on_target(mut justification: CircuitJustification) -> CircuitJustification {
+    let block_hash = justification.block_hash;
+    justification
+        .precommits
+        .retain(|precommit| precommit.target_hash == block_hash);
+    justification.ancestries_encoded.clear();
+    justification
+}
+
 /// Check the tree size against the number of leaves, mirroring the circuit's check in
 /// `get_merkle_root_commitments`. Without a tree size, use the nearest power of 2.
 fn get_merkle_tree_size(num_leaves: u32, header_range_commitment_tree_size: Option<u32>) -> usize {
@@ -605,6 +620,7 @@ mod tests {
     use avail_subxt::ext::avail_rust_core::grandpa::{Commit, Precommit};
     use avail_subxt::AvailHeader;
     use serde::{Deserialize, Serialize};
+    use sp1_vector_primitives::types::Precommit as CircuitPrecommit;
     use sp1_vector_primitives::{
         rotate::get_next_validator_pubkeys_from_epoch_end_header, verify_justification,
     };
@@ -708,6 +724,36 @@ mod tests {
         // Simplified encoding using none of the Substrate-specific structures
         let msg2 = Encode::encode(&(1u8, B256::from(h1.0).0, 2u32, 3u64, 4u64));
         assert_eq!(msg1, msg2, "Messages are not equal")
+    }
+
+    #[test]
+    fn test_keep_precommits_on_target() {
+        let target = B256::repeat_byte(1);
+        let child = B256::repeat_byte(2);
+        let precommit = |target_number, target_hash, signer: u8| CircuitPrecommit {
+            target_number,
+            target_hash,
+            pubkey: B256::repeat_byte(signer),
+            signature: B512::ZERO,
+        };
+        let justification = CircuitJustification {
+            round: 1,
+            authority_set_id: 10,
+            valset_pubkeys: vec![],
+            precommits: vec![
+                precommit(100, target, 10),
+                precommit(101, child, 11),
+                precommit(100, target, 12),
+            ],
+            block_hash: target,
+            ancestries_encoded: vec![vec![0u8; 32]],
+        };
+
+        let filtered = keep_precommits_on_target(justification);
+
+        let signers: Vec<B256> = filtered.precommits.iter().map(|p| p.pubkey).collect();
+        assert_eq!(signers, [B256::repeat_byte(10), B256::repeat_byte(12)]);
+        assert!(filtered.ancestries_encoded.is_empty());
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize)]
