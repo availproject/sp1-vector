@@ -1,10 +1,11 @@
+use crate::redact::redact_urls;
 use crate::types::{
     CoingekoApiResponse, EncodedFinalityProof, FinalityProof, VectorXJustificationApiResponse,
 };
 use alloy::primitives::{B256, B512};
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, ensure, Context, Result};
 use codec::{Decode, Encode};
-use futures::future::join_all;
+use futures::future::try_join_all;
 use sp1_vector_primitives::compute_authority_set_commitment;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
@@ -27,6 +28,19 @@ use avail_subxt::{
 /// large amounts of concurrent requests.
 static CONCURRENCY_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+/// If the justification endpoint or CoinGecko takes too long to respond, time out.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// How many times to send a justification request before the failure is returned.
+const JUSTIFICATION_REQUEST_ATTEMPTS: u32 = 3;
+
+/// The error text of the justification endpoint for a block without a justification.
+const NO_JUSTIFICATION_ERROR: &str = "No justification found";
+
+fn http_client() -> Result<reqwest::Client> {
+    Ok(reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?)
+}
+
 /// An RPC data fetcher for fetching data for VectorX. The vectorx_query_url is only necessary when
 /// querying justifications.
 pub struct RpcDataFetcher {
@@ -44,68 +58,76 @@ pub struct HeaderRangeRequestData {
 }
 
 impl RpcDataFetcher {
+    /// Connect to the Avail node. Panics if the configuration is missing or the connection fails.
     pub async fn new() -> Self {
-        dotenv::dotenv().ok();
-
-        if std::env::var("DEBUG").is_ok() {
-            let url = env::var("AVAIL_URL").unwrap_or_else(|_| "http://localhost:9944".to_owned());
-            let client = AvailClient::new(url.as_str()).await.unwrap();
-            let avail_chain_id =
-                env::var("AVAIL_CHAIN_ID").unwrap_or_else(|_| "avail_c".to_owned());
-            let vectorx_query_url = env::var("VECTORX_QUERY_URL").ok();
-            return RpcDataFetcher {
-                client,
-                avail_chain_id,
-                vectorx_query_url,
-            };
-        }
-
-        let url = env::var("AVAIL_URL").expect("AVAIL_URL must be set");
-        let client = AvailClient::new(url.as_str()).await.unwrap();
-        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
-        let vectorx_query_url = env::var("VECTORX_QUERY_URL").ok();
-        RpcDataFetcher {
-            client,
-            avail_chain_id,
-            vectorx_query_url,
-        }
+        Self::try_new()
+            .await
+            .unwrap_or_else(|e| panic!("Failed to create the Avail data fetcher: {e:?}"))
     }
 
-    /// TODO
-    pub async fn get_justification(&self, block_number: u32) -> Result<GrandpaJustification> {
-        if self.vectorx_query_url.is_none() {
-            return Err(anyhow::anyhow!("VECTORX_QUERY_URL must be set"));
-        }
+    /// Connect to the Avail node, and return an error if the configuration is missing or the
+    /// connection fails.
+    pub async fn try_new() -> Result<Self> {
+        dotenv::dotenv().ok();
 
-        let base_justification_query_url = format!(
-            "{}/api/justification",
-            self.vectorx_query_url.as_ref().unwrap()
-        );
+        let (url, avail_chain_id) = if std::env::var("DEBUG").is_ok() {
+            (
+                env::var("AVAIL_URL").unwrap_or_else(|_| "http://localhost:9944".to_owned()),
+                env::var("AVAIL_CHAIN_ID").unwrap_or_else(|_| "avail_c".to_owned()),
+            )
+        } else {
+            (
+                env::var("AVAIL_URL").context("AVAIL_URL must be set")?,
+                env::var("AVAIL_CHAIN_ID").context("AVAIL_CHAIN_ID must be set")?,
+            )
+        };
+
+        // The client's error prints the node URL, which can carry an API key.
+        let client = AvailClient::new(url.as_str())
+            .await
+            .map_err(avail_error)
+            .context("Failed to connect to the Avail node")?;
+
+        Ok(RpcDataFetcher {
+            client,
+            avail_chain_id,
+            vectorx_query_url: env::var("VECTORX_QUERY_URL").ok(),
+        })
+    }
+
+    /// Fetch the justification of a block from the justification endpoint. Returns `None` when
+    /// the endpoint answers that it has no justification for the block. A failed request is an
+    /// error, so the caller can tell an outage from a block without a justification.
+    pub async fn get_justification(
+        &self,
+        block_number: u32,
+    ) -> Result<Option<GrandpaJustification>> {
+        let Some(query_url) = self.vectorx_query_url.as_ref() else {
+            bail!("VECTORX_QUERY_URL must be set");
+        };
 
         let request_url = format!(
-            "{}?availChainId={}&blockNumber={}",
-            base_justification_query_url, self.avail_chain_id, block_number
+            "{}/api/justification?availChainId={}&blockNumber={}",
+            query_url, self.avail_chain_id, block_number
         );
 
-        let response = reqwest::get(request_url).await?;
-        let response: VectorXJustificationApiResponse =
-            response.json::<VectorXJustificationApiResponse>().await?;
-
-        if !response.success {
-            println!(
-                "Error while querying justification for block {:?}: {:?}",
-                block_number, response.error
-            );
-            return Err(anyhow::anyhow!(
-                "No justification found for the specified block number."
-            ));
-        }
-
-        // justification must exits if the success is true
-        // todo better design
-        match response.justification {
-            Some(x) => Ok(x),
-            _ => Err(anyhow::anyhow!("Justification from response was none")),
+        // Retry a failed request, so that one transient failure does not end the run.
+        let mut attempt = 1;
+        loop {
+            match request_justification(&request_url, block_number).await {
+                Ok(justification) => return Ok(justification),
+                Err(e) if attempt < JUSTIFICATION_REQUEST_ATTEMPTS => {
+                    tracing::warn!(
+                        "Justification request for block {} failed, attempt {}: {:?}",
+                        block_number,
+                        attempt,
+                        e
+                    );
+                    attempt += 1;
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
+                Err(e) => return Err(e),
+            }
         }
     }
 
@@ -115,7 +137,7 @@ impl RpcDataFetcher {
         &self,
         header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
-    ) -> HeaderRangeInputs {
+    ) -> Result<HeaderRangeInputs> {
         // The trusted header is not a leaf: the tree commits to (trusted_block, target_block].
         let num_leaves =
             header_range_request_data.target_block - header_range_request_data.trusted_block;
@@ -132,7 +154,7 @@ impl RpcDataFetcher {
                 header_range_request_data.trusted_block,
                 header_range_request_data.target_block,
             )
-            .await;
+            .await?;
         let encoded_headers: Vec<Vec<u8>> = headers.iter().map(|header| header.encode()).collect();
 
         let target_justification = self
@@ -140,42 +162,47 @@ impl RpcDataFetcher {
                 header_range_request_data.target_block,
                 header_range_request_data.is_target_epoch_end_block,
             )
-            .await
-            .expect("Failed to get justification data for target block.");
+            .await?
+            .with_context(|| {
+                format!(
+                    "No justification for target block {}",
+                    header_range_request_data.target_block
+                )
+            })?;
 
-        HeaderRangeInputs {
+        Ok(HeaderRangeInputs {
             merkle_tree_size,
             encoded_headers,
             target_justification,
-        }
+        })
     }
 
-    pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> RotateInputs {
+    pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> Result<RotateInputs> {
         let justification = keep_precommits_on_target(
             self.get_justification_data_epoch_end_block(authority_set_id)
-                .await,
+                .await?,
         );
 
-        let header_rotate_data = self.get_header_rotate(authority_set_id).await;
+        let header_rotate_data = self.get_header_rotate(authority_set_id).await?;
 
-        RotateInputs {
+        Ok(RotateInputs {
             justification,
             header_rotate_data,
-        }
+        })
     }
 
     // This function returns the last block justified by target_authority_set_id. This block
     // also specifies the new authority set, which starts justifying after this block.
     // Returns 0 if curr_authority_set_id <= target_authority_set_id.
-    pub async fn last_justified_block(&self, target_authority_set_id: u64) -> u32 {
+    pub async fn last_justified_block(&self, target_authority_set_id: u64) -> Result<u32> {
         let mut low = 0;
-        let head_block = self.get_head().await;
+        let head_block = self.get_head().await?;
         let mut high = head_block.number;
         let mut epoch_end_block_number = 0;
 
         while low <= high {
             let mid = (low + high) / 2;
-            let mid_authority_set_id = self.get_authority_set_id(mid).await;
+            let mid_authority_set_id = self.get_authority_set_id(mid).await?;
 
             match mid_authority_set_id.cmp(&(target_authority_set_id + 1)) {
                 Ordering::Equal => {
@@ -184,7 +211,7 @@ impl RpcDataFetcher {
                         epoch_end_block_number = mid;
                         break;
                     }
-                    let prev_authority_set_id = self.get_authority_set_id(mid - 1).await;
+                    let prev_authority_set_id = self.get_authority_set_id(mid - 1).await?;
                     if prev_authority_set_id == target_authority_set_id {
                         epoch_end_block_number = mid;
                         break;
@@ -196,13 +223,18 @@ impl RpcDataFetcher {
                 Ordering::Greater => high = mid - 1,
             }
         }
-        epoch_end_block_number
+        Ok(epoch_end_block_number)
     }
 
-    pub async fn get_block_hash(&self, block_number: u32) -> B256 {
-        let block_hash = self.client.block_hash_ext(block_number, true, false).await;
+    pub async fn get_block_hash(&self, block_number: u32) -> Result<B256> {
+        let block_hash = self
+            .client
+            .block_hash_ext(block_number, true, false)
+            .await
+            .map_err(avail_error)?
+            .with_context(|| format!("The Avail node has no hash for block {block_number}"))?;
 
-        B256::from(block_hash.unwrap().unwrap().0)
+        Ok(B256::from(block_hash.0))
     }
 
     /// This function returns a vector of headers for a given range of block numbers, inclusive of the start and end block numbers.
@@ -210,7 +242,7 @@ impl RpcDataFetcher {
         &self,
         start_block_number: u32,
         end_block_number: u32,
-    ) -> Vec<AvailHeader> {
+    ) -> Result<Vec<AvailHeader>> {
         // Fetch the headers in batches of MAX_CONCURRENT_WS_REQUESTS. The WS connection will error if there
         // are too many concurrent requests with Rpc(ClientError(MaxSlotsExceeded)).
         const MAX_CONCURRENT_WS_REQUESTS: usize = 200;
@@ -230,51 +262,58 @@ impl RpcDataFetcher {
                 .collect();
 
             // Await all futures concurrently
-            let headers_batch: Vec<AvailHeader> = join_all(header_futures).await;
+            let headers_batch: Vec<AvailHeader> = try_join_all(header_futures).await?;
 
             headers.extend_from_slice(&headers_batch);
             curr_block += MAX_CONCURRENT_WS_REQUESTS as u32;
         }
-        headers
+        Ok(headers)
     }
 
-    pub async fn get_header(&self, block_number: u32) -> AvailHeader {
-        let block_hash = self.get_block_hash(block_number).await;
-        let header_result = self.client.block_header(H256::from(block_hash.0)).await;
-
-        header_result.unwrap().unwrap()
+    pub async fn get_header(&self, block_number: u32) -> Result<AvailHeader> {
+        let block_hash = self.get_block_hash(block_number).await?;
+        self.client
+            .block_header(H256::from(block_hash.0))
+            .await
+            .map_err(avail_error)?
+            .with_context(|| format!("The Avail node has no header for block {block_number}"))
     }
 
-    pub async fn get_head(&self) -> AvailHeader {
-        let head_block_hash = self.client.finalized_block_hash_ext(true).await.unwrap();
-        let header = self.client.block_header(head_block_hash).await;
-
-        header.unwrap().unwrap()
+    pub async fn get_head(&self) -> Result<AvailHeader> {
+        let head_block_hash = self
+            .client
+            .finalized_block_hash_ext(true)
+            .await
+            .map_err(avail_error)?;
+        self.client
+            .block_header(head_block_hash)
+            .await
+            .map_err(avail_error)?
+            .context("The Avail node has no header for the finalized head")
     }
 
-    pub async fn get_authority_set_id(&self, block_number: u32) -> u64 {
+    pub async fn get_authority_set_id(&self, block_number: u32) -> Result<u64> {
         use avail_subxt::avail::grandpa::storage::CurrentSetId;
-        let block_hash = self.get_block_hash(block_number).await;
+        let block_hash = self.get_block_hash(block_number).await?;
 
         let at = Some(H256::from(block_hash.0));
         let set_id = CurrentSetId::fetch(&self.client.rpc_client, at)
             .await
-            .unwrap()
-            .unwrap();
+            .map_err(avail_error)?
+            .with_context(|| format!("No GRANDPA set id in storage at block {block_number}"))?;
         // todo hacky way of using auth set for hex devnet
-        let avail_chain_id = env::var("AVAIL_CHAIN_ID").expect("AVAIL_CHAIN_ID must be set");
-        if avail_chain_id == "hex" {
-            return set_id - 1;
+        if self.avail_chain_id == "hex" {
+            return Ok(set_id - 1);
         }
 
-        set_id
+        Ok(set_id)
     }
 
     // This function returns the authorities (as AffinePoint and public key bytes) for a given block number
     // by fetching the "authorities_bytes" from storage and decoding the bytes to a VersionedAuthorityList.
     // Note: The authorities returned by this function attest to block_number + 1.
-    pub async fn get_authorities(&self, block_number: u32) -> Vec<B256> {
-        let block_hash = self.get_block_hash(block_number).await;
+    pub async fn get_authorities(&self, block_number: u32) -> Result<Vec<B256>> {
+        let block_hash = self.get_block_hash(block_number).await?;
 
         let grandpa_authorities = self
             .client
@@ -285,37 +324,33 @@ impl RpcDataFetcher {
                 Some(H256::from(block_hash.0)),
             )
             .await
-            .unwrap();
+            .map_err(avail_error)?;
 
         let mut authorities: Vec<B256> = Vec::new();
         for (pub_key, weight) in grandpa_authorities {
             authorities.push(B256::from(pub_key.0));
-            let expected_weight = 1;
-            // Assert the LE representation of the weight of each validator is 1.
-            assert_eq!(
-                weight, expected_weight,
-                "The weight of the authority is not 1!"
-            );
+            // The circuit requires that the weight of each validator is 1.
+            ensure!(weight == 1, "The weight of the authority is not 1!");
         }
 
-        authorities
+        Ok(authorities)
     }
 
     /// Gets the authority set id and authority set hash that are defined in block_number. This authority set
     /// attests to block_number + 1.
-    pub async fn get_authority_set_data_for_block(&self, block_number: u32) -> (u64, B256) {
-        let authority_set_id = self.get_authority_set_id(block_number).await;
+    pub async fn get_authority_set_data_for_block(&self, block_number: u32) -> Result<(u64, B256)> {
+        let authority_set_id = self.get_authority_set_id(block_number).await?;
         let authority_set_hash = self
             .compute_authority_set_hash_for_block(block_number)
-            .await;
-        (authority_set_id, authority_set_hash)
+            .await?;
+        Ok((authority_set_id, authority_set_hash))
     }
 
     /// Computes the authority_set_hash for a given block number. Note: This is the authority set hash
     /// that validates the next block after the given block number.
-    pub async fn compute_authority_set_hash_for_block(&self, block_number: u32) -> B256 {
-        let authorities = self.get_authorities(block_number).await;
-        compute_authority_set_commitment(authorities.as_slice())
+    pub async fn compute_authority_set_hash_for_block(&self, block_number: u32) -> Result<B256> {
+        let authorities = self.get_authorities(block_number).await?;
+        Ok(compute_authority_set_commitment(authorities.as_slice()))
     }
 
     /// Get the justification data necessary for the circuit using GrandpaJustification and the block number.
@@ -323,45 +358,68 @@ impl RpcDataFetcher {
         &self,
         justification: GrandpaJustification,
         block_number: u32,
-    ) -> CircuitJustification {
+    ) -> Result<CircuitJustification> {
         // Get the authority set id that attested to block_number.
-        let authority_set_id = self.get_authority_set_id(block_number - 1).await;
+        let authority_set_id = self.get_authority_set_id(block_number - 1).await?;
 
         // Get the authority set for the block number.
-        let authorities = self.get_authorities(block_number - 1).await;
+        let authorities = self.get_authorities(block_number - 1).await?;
 
-        convert_justification_and_valset_to_circuit(justification, authorities, authority_set_id)
+        Ok(convert_justification_and_valset_to_circuit(
+            justification,
+            authorities,
+            authority_set_id,
+        ))
     }
 
-    /// Get the justification for a block using the DB cache from the justification indexer.
+    /// Get the justification for a block: from `grandpa_proveFinality` for an epoch end block, and
+    /// from the justification endpoint for every other block. Returns `None` when the source has
+    /// no justification for the block, and an error when the source fails.
     pub async fn get_justification_data_for_block(
         &self,
         block_number: u32,
         is_epoch_end_block: bool,
-    ) -> Option<CircuitJustification> {
+    ) -> Result<Option<CircuitJustification>> {
         let grandpa_justification = match is_epoch_end_block {
-            true => {
-                self.get_justification_data_for_block_unsafe(block_number)
-                    .await
-            }
-            false => self.get_justification(block_number).await,
+            // If the node has no finality proof for this exact block, or the RPC fails, try the
+            // endpoint.
+            true => match self
+                .get_justification_data_for_block_unsafe(block_number)
+                .await
+            {
+                Ok(Some(justification)) => Some(justification),
+                Ok(None) => self.get_justification(block_number).await?,
+                Err(rpc_error) => {
+                    tracing::warn!(
+                        "grandpa_proveFinality failed for block {}, trying the justification endpoint: {:?}",
+                        block_number,
+                        rpc_error
+                    );
+                    match self.get_justification(block_number).await {
+                        Ok(Some(justification)) => Some(justification),
+                        _ => return Err(rpc_error),
+                    }
+                }
+            },
+            false => self.get_justification(block_number).await?,
         };
 
-        if grandpa_justification.is_err() {
-            return None;
-        }
-        let grandpa_justification = grandpa_justification.unwrap();
+        let Some(grandpa_justification) = grandpa_justification else {
+            return Ok(None);
+        };
 
         // Convert DB stored justification into CircuitJustification.
         let circuit_justification = self
             .compute_data_from_justification(grandpa_justification, block_number)
-            .await;
-        Some(circuit_justification)
+            .await?;
+        Ok(Some(circuit_justification))
     }
 
     /// Get the latest justification data. Because Avail does not store the justification data for
     /// all blocks, we can only generate a proof using the latest justification data or the justification data for a specific block.
-    pub async fn get_latest_justification_data(&self) -> (CircuitJustification, AvailHeader) {
+    pub async fn get_latest_justification_data(
+        &self,
+    ) -> Result<(CircuitJustification, AvailHeader)> {
         let Ok(block_height) = self.client.finalized_block_height_ext(true, false).await else {
             panic!("Failed to fetch finalized block height")
         };
@@ -386,16 +444,17 @@ impl RpcDataFetcher {
 
         let data = self
             .compute_data_from_justification(justification, block_height)
-            .await;
+            .await?;
 
-        (data, block_header)
+        Ok((data, block_header))
     }
 
     /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
+    /// Returns `None` when the node has no finality proof for the block.
     pub async fn get_justification_data_for_block_unsafe(
         &self,
         epoch_end_block: u32,
-    ) -> Result<GrandpaJustification> {
+    ) -> Result<Option<GrandpaJustification>> {
         // If epoch end block, use grandpa_proveFinality to get the justification.
         let mut params = RpcParams::new();
         let _ = params.push(epoch_end_block);
@@ -404,17 +463,32 @@ impl RpcDataFetcher {
             .client
             .rpc_api()
             .call::<Option<EncodedFinalityProof>>("grandpa_proveFinality", params)
-            .await?;
+            .await
+            .map_err(avail_error)?;
 
-        let encoded_finality_proof = encoded_finality_proof
-            .ok_or(anyhow::anyhow!("grandpa_proveFinality RPC returned None."))?;
+        let Some(encoded_finality_proof) = encoded_finality_proof else {
+            return Ok(None);
+        };
 
         let finality_proof: FinalityProof =
-            Decode::decode(&mut encoded_finality_proof.0.as_slice()).unwrap();
+            Decode::decode(&mut encoded_finality_proof.0.as_slice())
+                .map_err(|e| anyhow!("Failed to decode the finality proof: {e}"))?;
         let justification: GrandpaJustification =
-            Decode::decode(&mut finality_proof.justification.as_slice()).unwrap();
+            Decode::decode(&mut finality_proof.justification.as_slice())
+                .map_err(|e| anyhow!("Failed to decode the justification: {e}"))?;
 
-        Ok(justification)
+        // `grandpa_proveFinality` answers with the justification that ends the authority set of
+        // the block. That is another block when the requested block is not an epoch end.
+        if justification.commit.target_number != epoch_end_block {
+            tracing::warn!(
+                "grandpa_proveFinality for block {} returned a justification for block {}",
+                epoch_end_block,
+                justification.commit.target_number
+            );
+            return Ok(None);
+        }
+
+        Ok(Some(justification))
     }
 
     /// Get the justification data for an epoch end block from the curr_authority_set_id to the next authority set id.
@@ -424,16 +498,17 @@ impl RpcDataFetcher {
     pub async fn get_justification_data_epoch_end_block(
         &self,
         curr_authority_set_id: u64,
-    ) -> CircuitJustification {
-        let epoch_end_block = self.last_justified_block(curr_authority_set_id).await;
-        if epoch_end_block == 0 {
-            panic!("Current authority set is still active!");
-        }
+    ) -> Result<CircuitJustification> {
+        let epoch_end_block = self.last_justified_block(curr_authority_set_id).await?;
+        ensure!(
+            epoch_end_block != 0,
+            "Current authority set is still active!"
+        );
 
         let grandpa_justification = self
             .get_justification_data_for_block_unsafe(epoch_end_block)
-            .await
-            .expect("No justification found");
+            .await?
+            .with_context(|| format!("No justification for epoch end block {epoch_end_block}"))?;
         self.compute_data_from_justification(grandpa_justification, epoch_end_block)
             .await
     }
@@ -444,13 +519,14 @@ impl RpcDataFetcher {
     pub async fn filter_auth_set_changes(
         &self,
         authority_set_id: u64,
-    ) -> Vec<Vec<(AuthorityId, u64)>> {
-        let epoch_end_block = self.last_justified_block(authority_set_id).await;
-        if epoch_end_block == 0 {
-            panic!("Current authority set is still active!");
-        }
+    ) -> Result<Vec<Vec<(AuthorityId, u64)>>> {
+        let epoch_end_block = self.last_justified_block(authority_set_id).await?;
+        ensure!(
+            epoch_end_block != 0,
+            "Current authority set is still active!"
+        );
 
-        let header = self.get_header(epoch_end_block).await;
+        let header = self.get_header(epoch_end_block).await?;
 
         let new_auths = header
             .digest
@@ -467,47 +543,118 @@ impl RpcDataFetcher {
                 _ => None,
             })
             .collect::<Vec<_>>();
-        new_auths
+        Ok(new_auths)
     }
 
     /// This function takes in a block_number as input, and fetches the new authority set specified
     /// in the epoch end block. It returns the encoded epoch end header, which the circuit decodes to
     /// find the new authority set.
-    pub async fn get_header_rotate(&self, authority_set_id: u64) -> HeaderRotateData {
-        let epoch_end_block = self.last_justified_block(authority_set_id).await;
-        if epoch_end_block == 0 {
-            panic!("Current authority set is still active!");
-        }
+    pub async fn get_header_rotate(&self, authority_set_id: u64) -> Result<HeaderRotateData> {
+        let epoch_end_block = self.last_justified_block(authority_set_id).await?;
+        ensure!(
+            epoch_end_block != 0,
+            "Current authority set is still active!"
+        );
 
-        let header = self.get_header(epoch_end_block).await;
+        let header = self.get_header(epoch_end_block).await?;
 
         let header_bytes = header.encode();
 
         // Fetch the new authority set specified in the epoch end block.
-        let expected_new_authorities = self.get_authorities(epoch_end_block).await;
+        let expected_new_authorities = self.get_authorities(epoch_end_block).await?;
 
-        // Decode the header the same way the circuit does. This panics if the header has no
-        // GRANDPA ScheduledChange, for example when the set changed through a ForcedChange.
-        let extracted_new_authorities =
-            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes);
+        // Decode the header the same way the circuit does. The decoder panics if the header has no
+        // GRANDPA ScheduledChange, for example when the set changed through a ForcedChange. The
+        // circuit would panic on the same header, so no rotate proof exists for it.
+        let extracted_new_authorities = std::panic::catch_unwind(|| {
+            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes)
+        })
+        .map_err(|_| {
+            anyhow!("The header of epoch end block {epoch_end_block} has no valid ScheduledChange")
+        })?;
 
-        assert_eq!(extracted_new_authorities, expected_new_authorities);
+        ensure!(
+            extracted_new_authorities == expected_new_authorities,
+            "The authorities in the header of block {epoch_end_block} differ from the authorities in storage"
+        );
 
-        HeaderRotateData { header_bytes }
+        Ok(HeaderRotateData { header_bytes })
     }
 }
 
-/// Demo keys are only valid on the public host and pro keys on the pro-api host, each with its
-/// own query param name; unknown params are silently ignored and the request treated as anonymous.
-fn coingecko_price_endpoint(base_url: &str, from_token: &str, api_key: &str) -> String {
-    let api_key_param = if base_url.contains("pro-api") {
-        "x_cg_pro_api_key"
-    } else {
-        "x_cg_demo_api_key"
+/// Send one request to the justification endpoint.
+///
+/// The endpoint answers HTTP 200 with `success: false` both for a block without a justification
+/// and for its own failures, for example a database error. Only the error text tells them apart.
+async fn request_justification(
+    request_url: &str,
+    block_number: u32,
+) -> Result<Option<GrandpaJustification>> {
+    let body = http_client()?
+        .get(request_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(reqwest::Error::without_url)
+        .context("The justification request failed")?
+        .text()
+        .await
+        .map_err(reqwest::Error::without_url)
+        .context("Failed to read the justification response")?;
+
+    parse_justification_response(&body, block_number)
+}
+
+/// Read the answer of the justification endpoint: `Some` for a justification, `None` for a block
+/// without one, and an error when the endpoint reports a failure.
+fn parse_justification_response(
+    body: &str,
+    block_number: u32,
+) -> Result<Option<GrandpaJustification>> {
+    // A body that does not decode is a fault of this one block's record. Skip the block, so that
+    // the caller can use the next one.
+    let response: VectorXJustificationApiResponse = match serde_json::from_str(body) {
+        Ok(response) => response,
+        Err(e) => {
+            tracing::warn!(
+                "The justification response for block {} does not decode: {}",
+                block_number,
+                e
+            );
+            return Ok(None);
+        }
     };
-    format!(
-        "{base_url}/v3/simple/price?ids={from_token}&vs_currencies=usd&{api_key_param}={api_key}"
-    )
+
+    if response.success {
+        return match response.justification {
+            Some(justification) => Ok(Some(justification)),
+            None => bail!("The justification response has success = true and no justification"),
+        };
+    }
+
+    match response.error.as_deref() {
+        Some(NO_JUSTIFICATION_ERROR) | None => Ok(None),
+        Some(error) => bail!("The justification endpoint failed for block {block_number}: {error}"),
+    }
+}
+
+/// Convert an Avail client error into an error without the node URL. The client's error prints
+/// the URL of the request that failed, and that URL can carry an API key.
+fn avail_error(error: impl std::fmt::Debug) -> anyhow::Error {
+    anyhow!("Avail RPC error: {}", redact_urls(&format!("{error:?}")))
+}
+
+/// Demo keys are only valid on the public host and pro keys on the pro-api host, each with its
+/// own header name. A key under the wrong name is ignored and the request is treated as anonymous.
+///
+/// The key goes in a header and not in the query string, so that no error can print it with
+/// the URL.
+fn coingecko_api_key_header(base_url: &str) -> &'static str {
+    if base_url.contains("pro-api") {
+        "x-cg-pro-api-key"
+    } else {
+        "x-cg-demo-api-key"
+    }
 }
 
 pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
@@ -516,10 +663,21 @@ pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
         env::var("COINGEKO_URL").unwrap_or("https://api.coingecko.com/api".to_string());
     let coingeko_api_key = env::var("COINGEKO_API_KEY").context("Missing COINGEKO_API_KEY env")?;
 
-    let price_endpoint = coingecko_price_endpoint(&coingeko_url, &from_token, &coingeko_api_key);
-    let response = reqwest::get(price_endpoint).await?;
+    let price_endpoint =
+        format!("{coingeko_url}/v3/simple/price?ids={from_token}&vs_currencies=usd");
+    let response = http_client()?
+        .get(price_endpoint)
+        .header(coingecko_api_key_header(&coingeko_url), coingeko_api_key)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)
+        .context("The CoinGecko request failed")?;
     let status = response.status();
-    let body = response.text().await?;
+    let body = response
+        .text()
+        .await
+        .map_err(reqwest::Error::without_url)
+        .context("Failed to read the CoinGecko response")?;
     if !status.is_success() {
         bail!("CoinGecko returned {status}: {body}");
     }
@@ -529,20 +687,22 @@ pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
 
 #[cfg(test)]
 mod coingecko_tests {
-    use super::coingecko_price_endpoint;
+    use super::coingecko_api_key_header;
 
     #[test]
-    fn demo_key_param_on_public_host() {
-        let url = coingecko_price_endpoint("https://api.coingecko.com/api", "ethereum", "CG-abc");
-        assert!(url.contains("x_cg_demo_api_key=CG-abc"), "{url}");
-        assert!(url.contains("ids=ethereum&vs_currencies=usd"), "{url}");
+    fn demo_key_header_on_public_host() {
+        assert_eq!(
+            coingecko_api_key_header("https://api.coingecko.com/api"),
+            "x-cg-demo-api-key"
+        );
     }
 
     #[test]
-    fn pro_key_param_on_pro_host() {
-        let url =
-            coingecko_price_endpoint("https://pro-api.coingecko.com/api", "ethereum", "CG-abc");
-        assert!(url.contains("x_cg_pro_api_key=CG-abc"), "{url}");
+    fn pro_key_header_on_pro_host() {
+        assert_eq!(
+            coingecko_api_key_header("https://pro-api.coingecko.com/api"),
+            "x-cg-pro-api-key"
+        );
     }
 }
 
@@ -630,6 +790,25 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_parse_justification_response() {
+        // The answers of the production endpoint, checked on 2026-11-16.
+        let missing = r#"{"success":false,"error":"No justification found"}"#;
+        assert!(parse_justification_response(missing, 1).unwrap().is_none());
+
+        // A failure of the endpoint is an error, not a missing justification.
+        let failure = r#"{"success":false,"error":"Database error occurred"}"#;
+        assert!(parse_justification_response(failure, 1).is_err());
+
+        // A record that does not decode is skipped.
+        assert!(parse_justification_response("not json", 1)
+            .unwrap()
+            .is_none());
+
+        let no_data = r#"{"success":true}"#;
+        assert!(parse_justification_response(no_data, 1).is_err());
+    }
+
+    #[test]
     fn test_merkle_tree_size_accepts_full_range() {
         // A range of tree_size blocks after the trusted block fills the tree exactly.
         assert_eq!(get_merkle_tree_size(512, Some(512)), 512);
@@ -655,11 +834,12 @@ mod tests {
         // This is an block in the middle of an era.
         let block = 645570;
 
-        let authority_set_id = fetcher.get_authority_set_id(block - 1).await;
+        let authority_set_id = fetcher.get_authority_set_id(block - 1).await.unwrap();
         let authority_set_hash = fetcher
             .compute_authority_set_hash_for_block(block - 1)
-            .await;
-        let header = fetcher.get_header(block).await;
+            .await
+            .unwrap();
+        let header = fetcher.get_header(block).await.unwrap();
         let header_hash = header.hash();
 
         println!("authority_set_id {:?}", authority_set_id);
@@ -668,7 +848,8 @@ mod tests {
 
         let _ = fetcher
             .get_justification_data_epoch_end_block(authority_set_id)
-            .await;
+            .await
+            .unwrap();
     }
 
     #[tokio::test]
@@ -682,7 +863,10 @@ mod tests {
         // target_authority_set_id. This block also specifies the new authority set,
         // target_authority_set_id + 1.
         let target_authority_set_id = 2;
-        let epoch_end_block_number = fetcher.last_justified_block(target_authority_set_id).await;
+        let epoch_end_block_number = fetcher
+            .last_justified_block(target_authority_set_id)
+            .await
+            .unwrap();
 
         // Verify that this is an epoch end block.
         assert_ne!(epoch_end_block_number, 0);
@@ -690,17 +874,27 @@ mod tests {
 
         let previous_authority_set_id = fetcher
             .get_authority_set_id(epoch_end_block_number - 1)
-            .await;
-        let new_authority_set_id = fetcher.get_authority_set_id(epoch_end_block_number).await;
+            .await
+            .unwrap();
+        let new_authority_set_id = fetcher
+            .get_authority_set_id(epoch_end_block_number)
+            .await
+            .unwrap();
 
-        let new_authorities = fetcher.get_authorities(epoch_end_block_number).await;
+        let new_authorities = fetcher
+            .get_authorities(epoch_end_block_number)
+            .await
+            .unwrap();
         let expected_new_authority_set_hash = compute_authority_set_commitment(&new_authorities);
 
         // Verify this is an epoch end block.
         assert_eq!(previous_authority_set_id + 1, new_authority_set_id);
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
-        let rotate_data = fetcher.get_header_rotate(new_authority_set_id).await;
+        let rotate_data = fetcher
+            .get_header_rotate(new_authority_set_id)
+            .await
+            .unwrap();
         let new_authority_set_hash = compute_authority_set_commitment(
             &get_next_validator_pubkeys_from_epoch_end_header(&rotate_data.header_bytes),
         );

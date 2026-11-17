@@ -1,5 +1,6 @@
 pub mod input;
 pub mod postgres;
+pub mod redact;
 pub mod types;
 
 pub use timeout::Timeout;

@@ -7,16 +7,20 @@ use alloy::{
     providers::{Provider, ProviderBuilder},
     sol,
 };
-use futures::future::{join_all, try_join_all};
+use futures::future::join_all;
 use std::env;
+use std::future::Future;
+use std::io::Write;
 use std::ops::{Div, Mul};
 use std::str::FromStr;
+use std::sync::OnceLock;
 use std::time::Duration;
 use std::{cmp::min, collections::HashMap};
 use tokio::time::sleep;
 
 use anyhow::{bail, Context, Result};
 use services::input::{fetch_usd_rate, HeaderRangeRequestData, RpcDataFetcher};
+use services::redact::{redact_urls, Redactor};
 use services::Timeout;
 use sp1_sdk::env::{EnvProver, EnvProvingKey};
 use sp1_sdk::network::FulfillmentStrategy;
@@ -136,21 +140,22 @@ where
 
     /// Register a new chain with the operator.
     ///
-    /// This function will panic if the tree size doesnt match as expected, or it fails to get the chain id.
-    async fn with_chain(mut self, provider: P, address: Address) -> Self {
+    /// Returns an error if the chain's RPC fails, so the caller can skip this chain and serve the
+    /// others. This function will panic if the tree size doesnt match as expected.
+    async fn add_chain(&mut self, provider: P, address: Address) -> Result<()> {
         let contract = SP1VectorInstance::new(address, provider);
 
         let tree_size = contract
             .headerRangeCommitmentTreeSize()
             .call()
             .await
-            .expect("Failed to get tree size");
+            .context("Failed to get tree size")?;
 
         let chain_id = contract
             .provider()
             .get_chain_id()
             .await
-            .expect("Failed to get chain id");
+            .context("Failed to get chain id")?;
 
         // Register the first tree size.
         match self.tree_size {
@@ -166,7 +171,7 @@ where
 
         self.contracts.insert(chain_id, contract);
 
-        self
+        Ok(())
     }
 }
 
@@ -190,7 +195,8 @@ where
         let header_range_inputs = self
             .fetcher
             .get_header_range_inputs(header_range_request, Some(tree_size))
-            .await;
+            .await
+            .context("Failed to get the header range inputs")?;
 
         stdin.write(&proof_type);
         stdin.write(&header_range_inputs);
@@ -258,14 +264,14 @@ where
         let current_authority_set_id = self
             .fetcher
             .get_authority_set_id(header_range_contract_data.vectorx_latest_block - 1)
-            .await;
+            .await?;
 
         info!("current_authority_set_id: {}", current_authority_set_id);
         // Get the last justified block by the current authority set id.
         let last_justified_block = self
             .fetcher
             .last_justified_block(current_authority_set_id)
-            .await;
+            .await?;
 
         // If this is the last justified block, check for header range with next authority set.
         let mut request_authority_set_id = current_authority_set_id;
@@ -294,15 +300,15 @@ where
                 header_range_contract_data.avail_current_block,
                 request_authority_set_id,
             )
-            .await;
+            .await?;
 
         info!("Target Block: {:?}", maybe_block_to_step_to);
 
-        if let Some(block_to_step_to) = maybe_block_to_step_to {
+        if let Some((block_to_step_to, is_target_epoch_end_block)) = maybe_block_to_step_to {
             return Ok(Some(HeaderRangeRequestData {
                 trusted_block: header_range_contract_data.vectorx_latest_block,
                 target_block: block_to_step_to,
-                is_target_epoch_end_block: block_to_step_to == last_justified_block,
+                is_target_epoch_end_block,
             }));
         }
         Ok(None)
@@ -322,12 +328,12 @@ where
         let header_range_commitment_tree_size =
             contract.headerRangeCommitmentTreeSize().call().await?;
 
-        let avail_current_block = self.fetcher.get_head().await.number;
+        let avail_current_block = self.fetcher.get_head().await?.number;
 
         let vectorx_current_authority_set_id = self
             .fetcher
             .get_authority_set_id(vectorx_latest_block - 1)
-            .await;
+            .await?;
         let next_authority_set_id = vectorx_current_authority_set_id + 1;
 
         let next_authority_set_hash = contract
@@ -348,6 +354,9 @@ where
     // of the epoch.
     // 2. If the block has a valid justification, return the block number.
     // 3. If the block has no valid justification, return None.
+    //
+    // The returned flag is true when the block is the last justified block of `authority_set_id`.
+    // The justification of such a block comes from `grandpa_proveFinality`.
     async fn find_block_to_step_to(
         &self,
         ideal_block_interval: u32,
@@ -355,9 +364,11 @@ where
         vectorx_current_block: u32,
         avail_current_block: u32,
         authority_set_id: u64,
-    ) -> Option<u32> {
-        let fetcher = RpcDataFetcher::new().await;
-        let last_justified_block = fetcher.last_justified_block(authority_set_id).await;
+    ) -> Result<Option<(u32, bool)>> {
+        // Each search uses its own connection, so that the searches of several chains run in
+        // parallel within the per-chain timeout.
+        let fetcher = RpcDataFetcher::try_new().await?;
+        let last_justified_block = fetcher.last_justified_block(authority_set_id).await?;
 
         // Step to the last justified block of the current epoch if it is in range. When the last
         // justified block is 0, the SP1Vector contract's latest epoch is the current epoch on the
@@ -366,7 +377,7 @@ where
             && last_justified_block <= vectorx_current_block + header_range_commitment_tree_size
         {
             debug!("last_justified_block: {}", last_justified_block);
-            return Some(last_justified_block);
+            return Ok(Some((last_justified_block, true)));
         }
 
         // The maximum valid block to step to is the either header_range_commitment_tree_size blocks
@@ -389,7 +400,7 @@ where
 
         // If block_to_step_to is <= to the current block, return None.
         if block_to_step_to <= vectorx_current_block {
-            return None;
+            return Ok(None);
         }
 
         // Check that block_to_step_to has a valid justification. If not, iterate up until the maximum_vectorx_target_block
@@ -402,20 +413,18 @@ where
                     vectorx_current_block + ideal_block_interval,
                     max_valid_block_to_step_to
                 );
-                return None;
+                return Ok(None);
             }
 
-            if fetcher
-                .get_justification_data_for_block(block_to_step_to, false)
-                .await
-                .is_some()
-            {
+            // An error here means that the justification endpoint failed. Stop the search, because
+            // every later block would fail the same way.
+            if fetcher.get_justification(block_to_step_to).await?.is_some() {
                 break;
             }
             block_to_step_to += 1;
         }
 
-        Some(block_to_step_to)
+        Ok(Some((block_to_step_to, false)))
     }
 }
 
@@ -460,12 +469,14 @@ where
         &self,
         current_authority_set_id: u64,
     ) -> Result<SP1ProofWithPublicValues> {
-        let fetcher = RpcDataFetcher::new().await;
-
         let mut stdin: SP1Stdin = SP1Stdin::new();
 
         let proof_type = ProofType::RotateProof;
-        let rotate_input = fetcher.get_rotate_inputs(current_authority_set_id).await;
+        let fetcher = RpcDataFetcher::try_new().await?;
+        let rotate_input = fetcher
+            .get_rotate_inputs(current_authority_set_id)
+            .await
+            .context("Failed to get the rotate inputs")?;
 
         stdin.write(&proof_type);
         stdin.write(&rotate_input);
@@ -533,17 +544,17 @@ where
         debug!("rotate_contract_data: {:?}", rotate_contract_data);
 
         // Get the current block and authority set id from the Avail chain.
-        let head_block = self.fetcher.get_head().await.number;
+        let head_block = self.fetcher.get_head().await?.number;
         debug!("head_block: {}", head_block);
 
-        let head_authority_set_id = self.fetcher.get_authority_set_id(head_block - 1).await;
+        let head_authority_set_id = self.fetcher.get_authority_set_id(head_block - 1).await?;
         debug!("head_authority_set_id: {}", head_authority_set_id);
 
         // The current authority set id is the authority set id of the block before the current block.
         let current_authority_set_id = self
             .fetcher
             .get_authority_set_id(rotate_contract_data.current_block - 1)
-            .await;
+            .await?;
         debug!("current_authority_set_id: {}", current_authority_set_id);
 
         if current_authority_set_id < head_authority_set_id
@@ -564,22 +575,58 @@ where
     P: Provider<N>,
     N: Network,
 {
+    /// Run `f` for each chain, with a timeout per chain. A chain that fails is logged and left
+    /// out, so it does not stop the other chains.
+    ///
+    /// Returns the values of the chains that succeeded, and whether any chain failed.
+    async fn for_each_chain<T, F, Fut>(
+        &self,
+        chain_ids: &[u64],
+        step: &str,
+        f: F,
+    ) -> (Vec<(u64, T)>, bool)
+    where
+        F: Fn(u64) -> Fut,
+        Fut: Future<Output = Result<T>>,
+    {
+        let results = join_all(chain_ids.iter().map(|&chain_id| {
+            let fut = f(chain_id).timeout(Duration::from_secs(RPC_TIMEOUT_SECS));
+            async move { (chain_id, fut.await) }
+        }))
+        .await;
+
+        let mut values = Vec::with_capacity(results.len());
+        let mut has_errors = false;
+        for (chain_id, result) in results {
+            match result {
+                Ok(Ok(value)) => values.push((chain_id, value)),
+                Ok(Err(e)) => {
+                    has_errors = true;
+                    error!("{} failed for chain {}: {:?}", step, chain_id, e);
+                }
+                Err(_) => {
+                    has_errors = true;
+                    error!(
+                        "{} timed out for chain {} after {} seconds",
+                        step, chain_id, RPC_TIMEOUT_SECS
+                    );
+                }
+            }
+        }
+        (values, has_errors)
+    }
+
     /// Create and relay a header range proof for each chain.
     ///
     /// If any step of this function fails, it will return a generic error indicating a failure.
-    async fn handle_header_range(&self) -> Result<()> {
+    async fn handle_header_range(&self, chain_ids: &[u64]) -> Result<()> {
         let block_interval = get_block_update_interval();
 
-        // NOTE: Fails fast if any of the futures fail.
-        let header_range_datas =
-            try_join_all(self.contracts.keys().copied().map(|id| async move {
-                Result::<_, anyhow::Error>::Ok((
-                    id,
-                    self.find_header_range(id, block_interval).await?,
-                ))
-            }))
-            .timeout(Duration::from_secs(RPC_TIMEOUT_SECS))
-            .await??;
+        let (header_range_datas, mut has_errors) = self
+            .for_each_chain(chain_ids, "Finding the header range", |id| {
+                self.find_header_range(id, block_interval)
+            })
+            .await;
 
         // Batch the chains with the same header range request data.
         let mut header_range_data_to_chain_id: HashMap<_, Vec<u64>> = HashMap::new();
@@ -649,15 +696,14 @@ where
 
         // Check if any of the futures failed.
         // There are two cases where a future can fail here:
-        // - Creating the rotate proof failed.
+        // - Creating the header range proof failed.
         // - Relaying the transaction failed.
         //
         // In either case log it and indicate the failure to the caller.
-        let mut has_errors = false;
         for batch_result in results {
             if let Err(e) = batch_result {
                 has_errors = true;
-                error!("Error creating rotate proof: {:?}", e);
+                error!("Error creating header range proof: {:?}", e);
             } else {
                 for relay_result in batch_result.unwrap() {
                     if let Ok((chain_id, tx_hash)) = relay_result {
@@ -668,7 +714,7 @@ where
                     } else {
                         has_errors = true;
                         error!(
-                            "Error relaying rotate proof: {:?}",
+                            "Error relaying header range proof: {:?}",
                             relay_result.unwrap_err()
                         );
                     }
@@ -686,17 +732,12 @@ where
     /// Create and relay proof for each chain of an authority set rotation.
     ///
     /// If any step of this function fails, it will return a generic error indicating a failure.
-    async fn handle_rotate(&self) -> Result<()> {
+    async fn handle_rotate(&self, chain_ids: &[u64]) -> Result<()> {
         debug!("Enter handle rotate");
 
-        let next_authority_set_ids = self.contracts.keys().copied().map(|id| async move {
-            Result::<_, anyhow::Error>::Ok((id, self.find_rotate(id).await?))
-        });
-
-        // NOTE: Fails fast if any of the futures fail.
-        let next_authority_set_ids = try_join_all(next_authority_set_ids)
-            .timeout(Duration::from_secs(RPC_TIMEOUT_SECS))
-            .await??;
+        let (next_authority_set_ids, mut has_errors) = self
+            .for_each_chain(chain_ids, "Finding the rotate", |id| self.find_rotate(id))
+            .await;
 
         // "Batch" the chains by the next authority set id.
         let mut next_authority_set_to_chain_ids_map: HashMap<u64, Vec<u64>> =
@@ -768,7 +809,6 @@ where
         // - Relaying the transaction failed.
         //
         // In either case log it and indicate the failure to the caller.
-        let mut has_errors = false;
         for batch_result in results {
             if let Err(e) = batch_result {
                 has_errors = true;
@@ -954,16 +994,26 @@ where
         let effective_gas_price: f64 = receipt.effective_gas_price() as f64;
         let effective_gas_used = effective_gas_price.mul(receipt.gas_used() as f64).div(wei);
 
-        let eth_to_usd_rate = fetch_usd_rate().await?;
-        let usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset);
-
-        info!(
-            message = "Transaction gas fee used",
-            gas_fee = effective_gas_used,
-            usd_fee = usd_fee,
-            tx_hash = %receipt.transaction_hash(),
-            last_usd_gas_estimates = ?last_estimates
-        );
+        // The transaction is mined at this point. A failed price lookup must not turn the relay
+        // into a failure, so the log line has no `usd_fee` in that case.
+        match fetch_usd_rate().await {
+            Ok(eth_to_usd_rate) => info!(
+                message = "Transaction gas fee used",
+                gas_fee = effective_gas_used,
+                usd_fee = effective_gas_used.mul(eth_to_usd_rate.from_asset.to_asset),
+                tx_hash = %receipt.transaction_hash(),
+                last_usd_gas_estimates = ?last_estimates
+            ),
+            Err(e) => {
+                warn!("Failed to fetch the USD rate for the fee log: {:?}", e);
+                info!(
+                    message = "Transaction gas fee used",
+                    gas_fee = effective_gas_used,
+                    tx_hash = %receipt.transaction_hash(),
+                    last_usd_gas_estimates = ?last_estimates
+                );
+            }
+        }
 
         Ok(receipt.transaction_hash())
     }
@@ -999,15 +1049,22 @@ where
         debug!("Starting operator, run_once");
         let mut has_errors = false;
 
-        // NOTE: Fails fast if any of the futures fail.
-        try_join_all(self.contracts.keys().copied().map(|id| self.check_vkey(id))).await?;
+        // A chain whose vkey check fails is left out of this run. The other chains go on.
+        let all_chain_ids: Vec<u64> = self.contracts.keys().copied().collect();
+        let (checked, check_errors) = self
+            .for_each_chain(&all_chain_ids, "Checking the verifying key", |id| {
+                self.check_vkey(id)
+            })
+            .await;
+        has_errors |= check_errors;
+        let chain_ids: Vec<u64> = checked.into_iter().map(|(id, ())| id).collect();
 
-        if let Err(e) = self.handle_rotate().await {
+        if let Err(e) = self.handle_rotate(&chain_ids).await {
             has_errors = true;
             error!("Error during `handle_rotate`: {:?}", e);
         }
 
-        if let Err(e) = self.handle_header_range().await {
+        if let Err(e) = self.handle_header_range(&chain_ids).await {
             has_errors = true;
             error!("Error during `handle_header_range`: {:?}", e);
         }
@@ -1108,15 +1165,58 @@ async fn main() -> Result<()> {
                 .json()
                 .with_current_span(true)
                 .with_line_number(true)
-                .with_target(true),
+                .with_target(true)
+                .with_writer(|| RedactingWriter(std::io::stdout())),
         )
         .with(LevelFilter::from_str(&log_level)?)
         .init();
+
+    // The default panic hook writes the message to stderr as it is, and a panic message can hold
+    // an RPC URL. Send panics through the log instead, where URLs are redacted.
+    // `Backtrace::capture` honours `RUST_BACKTRACE`, as the default hook does.
+    std::panic::set_hook(Box::new(|panic_info| {
+        let backtrace = std::backtrace::Backtrace::capture();
+        match backtrace.status() {
+            std::backtrace::BacktraceStatus::Captured => {
+                error!("Panic: {}\n{}", panic_info, backtrace)
+            }
+            _ => error!("Panic: {}", panic_info),
+        }
+    }));
 
     let signer_mode = env::var("SIGNER_MODE")
         .map(|v| v.parse().unwrap())
         .unwrap_or(SignerMode::Local);
     let config = ChainConfig::fetch().expect("Failed to fetch chain config");
+
+    // From here on the log also removes the configured secret values themselves.
+    let mut redactor = Redactor::default();
+    for name in [
+        "PRIVATE_KEY",
+        "NETWORK_PRIVATE_KEY",
+        "SECURE_RELAYER_API_KEY",
+        "COINGEKO_API_KEY",
+    ] {
+        if let Ok(value) = env::var(name) {
+            redactor.add_secret(&value);
+        }
+    }
+    for name in [
+        "AVAIL_URL",
+        "RPC_URL",
+        "SECURE_RELAYER_ENDPOINT",
+        "DATABASE_URL",
+        "VECTORX_QUERY_URL",
+        "COINGEKO_URL",
+    ] {
+        if let Ok(value) = env::var(name) {
+            redactor.add_url(&value);
+        }
+    }
+    for chain in &config {
+        redactor.add_url(&chain.rpc_url);
+    }
+    let _ = LOG_REDACTOR.set(redactor);
 
     let run_result = match signer_mode {
         SignerMode::Local => run_with_signer(config).await,
@@ -1127,35 +1227,148 @@ async fn main() -> Result<()> {
 }
 
 async fn run_with_signer(config: Vec<ChainConfig>) -> Result<()> {
-    let mut operator = SP1VectorOperator::new(SignerMode::Local).await;
+    let operator = SP1VectorOperator::new(SignerMode::Local).await;
 
     let signer: PrivateKeySigner = env::var("PRIVATE_KEY")
         .expect("PRIVATE_KEY must be set")
         .parse()
         .expect("Failed to parse PRIVATE_KEY");
 
-    for c in config {
-        let provider = ProviderBuilder::new()
-            .wallet(signer.clone())
-            .on_http(c.rpc_url.parse().expect("Failed to parse RPC URL"));
+    let chains = config
+        .into_iter()
+        .map(|c| {
+            let provider = ProviderBuilder::new()
+                .wallet(signer.clone())
+                .on_http(c.rpc_url.parse().expect("Failed to parse RPC URL"));
+            (provider, c.vector_address)
+        })
+        .collect();
 
-        operator = operator.with_chain(provider, c.vector_address).await;
-    }
-
-    operator.run().await
+    run_with_chains(operator, chains).await
 }
 
 async fn run_with_kms(config: Vec<ChainConfig>) -> Result<()> {
-    let mut operator = SP1VectorOperator::new(SignerMode::Kms).await;
+    let operator = SP1VectorOperator::new(SignerMode::Kms).await;
 
-    for c in config {
-        let provider =
-            ProviderBuilder::new().on_http(c.rpc_url.parse().expect("Failed to parse RPC URL"));
+    let chains = config
+        .into_iter()
+        .map(|c| {
+            let provider =
+                ProviderBuilder::new().on_http(c.rpc_url.parse().expect("Failed to parse RPC URL"));
+            (provider, c.vector_address)
+        })
+        .collect();
 
-        operator = operator.with_chain(provider, c.vector_address).await;
+    run_with_chains(operator, chains).await
+}
+
+/// Register the chains and run the operator. A chain whose RPC fails at registration is skipped,
+/// so that it does not stop the other chains. The run still ends with an error in that case.
+async fn run_with_chains<P, N>(
+    mut operator: SP1VectorOperator<P, N>,
+    chains: Vec<(P, Address)>,
+) -> Result<()>
+where
+    P: Provider<N>,
+    N: Network,
+{
+    let mut skipped_chain = false;
+    for (provider, address) in chains {
+        let registration = operator
+            .add_chain(provider, address)
+            .timeout(Duration::from_secs(RPC_TIMEOUT_SECS))
+            .await
+            .unwrap_or_else(|_| Err(anyhow::anyhow!("The chain's RPC timed out")));
+        if let Err(e) = registration {
+            skipped_chain = true;
+            error!("Skipping the contract {}: {:?}", address, e);
+        }
     }
 
-    operator.run().await
+    let run_result = operator.run().await;
+    if skipped_chain {
+        bail!("At least one chain was skipped at startup");
+    }
+    run_result
+}
+
+/// The configured secret values. `main` sets it once the chain config is loaded.
+static LOG_REDACTOR: OnceLock<Redactor> = OnceLock::new();
+
+/// Writes log lines with the path and query of every URL redacted. RPC URLs carry API keys, and
+/// errors from the HTTP and RPC libraries print the URL that failed. Once `LOG_REDACTOR` is set,
+/// the configured secret values are removed as well.
+///
+/// The `tracing` fmt layer passes each event in one `write` call, so a URL is never split.
+struct RedactingWriter<W>(W);
+
+impl<W: Write> Write for RedactingWriter<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let text = String::from_utf8_lossy(buf);
+        let line = match LOG_REDACTOR.get() {
+            Some(redactor) => redactor.redact(&text),
+            None => redact_urls(&text),
+        };
+        self.0.write_all(line.as_bytes())?;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RedactingWriter;
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
+
+    #[derive(Clone, Default)]
+    struct SharedBuffer(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for SharedBuffer {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    /// An error with a key-bearing URL, logged the way the operator logs errors, must reach the
+    /// output without the key. The JSON layer is the one `main` installs.
+    #[test]
+    fn log_lines_have_no_url_path() {
+        let buffer = SharedBuffer::default();
+        let writer = buffer.clone();
+        let subscriber = tracing_subscriber::registry().with(
+            tracing_subscriber::fmt::layer()
+                .json()
+                .with_writer(move || RedactingWriter(writer.clone())),
+        );
+
+        tracing::subscriber::with_default(subscriber, || {
+            let error = anyhow::anyhow!(
+                r#"reqwest::Error {{ kind: Request, url: "https://rpc.example/v2/SECRET_KEY" }}"#
+            )
+            .context("error sending request for url (https://rpc.example/v2/SECRET_KEY)");
+            tracing::error!("Error during `handle_rotate`: {:?}", error);
+        });
+
+        let output = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+        // The redacted line is still one valid JSON object.
+        serde_json::from_str::<serde_json::Value>(&output).expect("log line is not valid JSON");
+        assert!(output.contains("handle_rotate"), "{output}");
+        assert!(
+            output.contains("https://rpc.example/<redacted>"),
+            "{output}"
+        );
+        assert!(!output.contains("SECRET_KEY"), "{output}");
+    }
 }
 
 mod config {

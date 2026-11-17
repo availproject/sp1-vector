@@ -51,13 +51,13 @@ async fn main() -> anyhow::Result<()> {
                     },
                     Some(512),
                 )
-                .await;
+                .await?;
 
             stdin.write(&proof_type);
             stdin.write(&header_range_inputs);
         }
         ProofType::RotateProof => {
-            let rotate_input = fetcher.get_rotate_inputs(authority_set_id).await;
+            let rotate_input = fetcher.get_rotate_inputs(authority_set_id).await?;
 
             stdin.write(&proof_type);
             stdin.write(&rotate_input);
