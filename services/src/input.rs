@@ -558,7 +558,9 @@ fn coingecko_price_endpoint(base_url: &str, from_token: &str, api_key: &str) -> 
     } else {
         "x_cg_demo_api_key"
     };
-    format!("{base_url}/v3/simple/price?ids={from_token}&vs_currencies=usd&{api_key_param}={api_key}")
+    format!(
+        "{base_url}/v3/simple/price?ids={from_token}&vs_currencies=usd&{api_key_param}={api_key}"
+    )
 }
 
 pub async fn fetch_usd_rate() -> Result<CoingekoApiResponse> {
