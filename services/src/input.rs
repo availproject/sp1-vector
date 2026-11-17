@@ -3,13 +3,13 @@ use crate::types::{
 };
 use alloy::primitives::{B256, B512};
 use anyhow::{bail, Context, Result};
-use codec::{Compact, Decode, Encode};
+use codec::{Decode, Encode};
 use futures::future::join_all;
+use sp1_vector_primitives::compute_authority_set_commitment;
 use sp1_vector_primitives::rotate::get_next_validator_pubkeys_from_epoch_end_header;
 use sp1_vector_primitives::types::{
     CircuitJustification, HeaderRangeInputs, HeaderRotateData, Precommit, RotateInputs,
 };
-use sp1_vector_primitives::{compute_authority_set_commitment, consts::HASH_SIZE};
 use std::cmp::Ordering;
 use std::env;
 use std::time::Duration;
@@ -116,20 +116,10 @@ impl RpcDataFetcher {
         header_range_request_data: HeaderRangeRequestData,
         header_range_commitment_tree_size: Option<u32>,
     ) -> HeaderRangeInputs {
-        let num_headers =
-            header_range_request_data.target_block - header_range_request_data.trusted_block + 1;
-        let merkle_tree_size: usize;
-        if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
-            assert!(
-                header_range_commitment_tree_size >= num_headers
-                    && header_range_commitment_tree_size.is_power_of_two(),
-                "Header range commitment tree size must be greater than or equal to the number of headers and a power of two"
-            );
-            merkle_tree_size = header_range_commitment_tree_size as usize;
-        } else {
-            // NOTE: DANGEROUS. ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
-            merkle_tree_size = get_merkle_tree_size(num_headers);
-        }
+        // The trusted header is not a leaf: the tree commits to (trusted_block, target_block].
+        let num_leaves =
+            header_range_request_data.target_block - header_range_request_data.trusted_block;
+        let merkle_tree_size = get_merkle_tree_size(num_leaves, header_range_commitment_tree_size);
 
         tracing::debug!(
             "Getting block headers range from {} to {}",
@@ -161,9 +151,10 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> RotateInputs {
-        let justification = self
-            .get_justification_data_epoch_end_block(authority_set_id)
-            .await;
+        let justification = keep_precommits_on_target(
+            self.get_justification_data_epoch_end_block(authority_set_id)
+                .await,
+        );
 
         let header_rotate_data = self.get_header_rotate(authority_set_id).await;
 
@@ -480,9 +471,8 @@ impl RpcDataFetcher {
     }
 
     /// This function takes in a block_number as input, and fetches the new authority set specified
-    /// in the epoch end block. It returns the data necessary to prove the new authority set, which
-    /// specifies the new authority set hash, the number of authorities, and the start and end
-    /// position of the encoded new authority set in the header.
+    /// in the epoch end block. It returns the encoded epoch end header, which the circuit decodes to
+    /// find the new authority set.
     pub async fn get_header_rotate(&self, authority_set_id: u64) -> HeaderRotateData {
         let epoch_end_block = self.last_justified_block(authority_set_id).await;
         if epoch_end_block == 0 {
@@ -496,57 +486,14 @@ impl RpcDataFetcher {
         // Fetch the new authority set specified in the epoch end block.
         let expected_new_authorities = self.get_authorities(epoch_end_block).await;
 
-        let mut position = 0;
-        let number_encoded = Compact(epoch_end_block).encode();
-        // Skip past parent_hash, number, state_root, extrinsics_root.
-        position += HASH_SIZE + number_encoded.len() + HASH_SIZE + HASH_SIZE;
-        let mut found_correct_log = false;
-        for log in header.digest.logs {
-            let encoded_log = log.clone().encode();
-            // Note: Two bytes are skipped between the consensus id and value.
-            if let DigestItem::Consensus(consensus_id, value) = log {
-                if consensus_id == [70, 82, 78, 75] {
-                    // Decode the consensus log. Only if this is the correct log, will we continue.
-                    match ConsensusLog::<u32>::decode(&mut value.as_slice()) {
-                        Ok(ConsensusLog::ScheduledChange(_)) => {
-                            println!("Found ScheduledChange log!");
-                            found_correct_log = true;
-                        }
-                        Ok(ConsensusLog::ForcedChange(_, _)) => {
-                            println!("Found ForcedChange log!");
-                            found_correct_log = true;
-                        }
-                        _ => {
-                            position += encoded_log.len();
-                            continue;
-                        }
-                    }
-                    break;
-                }
-            }
-            // If this is not the correct log, increment position by the length of the encoded log.
-            if !found_correct_log {
-                position += encoded_log.len();
-            }
-        }
-
-        // Panic if there is not a consensus log.
-        if !found_correct_log {
-            panic!(
-                "Block: {:?} should be an epoch end block, but did not find corresponding consensus log!",
-                epoch_end_block
-            );
-        }
-
+        // Decode the header the same way the circuit does. This panics if the header has no
+        // GRANDPA ScheduledChange, for example when the set changed through a ForcedChange.
         let extracted_new_authorities =
-            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes, position);
+            get_next_validator_pubkeys_from_epoch_end_header(&header_bytes);
 
         assert_eq!(extracted_new_authorities, expected_new_authorities);
 
-        HeaderRotateData {
-            header_bytes,
-            consensus_log_position: position,
-        }
+        HeaderRotateData { header_bytes }
     }
 }
 
@@ -633,10 +580,35 @@ pub fn convert_justification_and_valset_to_circuit(
     }
 }
 
-/// NOTE: ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
-fn get_merkle_tree_size(num_headers: u32) -> usize {
+/// Keep only the precommits on the justified block itself, and drop the ancestries.
+///
+/// A precommit can target a descendant of the justified block. The justification then carries the
+/// headers that link the two, and the rotate circuit rejects every justification with ancestries.
+/// The circuit still requires a supermajority, so the remaining precommits must reach it alone.
+pub fn keep_precommits_on_target(mut justification: CircuitJustification) -> CircuitJustification {
+    let block_hash = justification.block_hash;
+    justification
+        .precommits
+        .retain(|precommit| precommit.target_hash == block_hash);
+    justification.ancestries_encoded.clear();
+    justification
+}
+
+/// Check the tree size against the number of leaves, mirroring the circuit's check in
+/// `get_merkle_root_commitments`. Without a tree size, use the nearest power of 2.
+fn get_merkle_tree_size(num_leaves: u32, header_range_commitment_tree_size: Option<u32>) -> usize {
+    if let Some(header_range_commitment_tree_size) = header_range_commitment_tree_size {
+        assert!(
+            header_range_commitment_tree_size >= num_leaves
+                && header_range_commitment_tree_size.is_power_of_two(),
+            "Header range commitment tree size must be greater than or equal to the number of leaves and a power of two"
+        );
+        return header_range_commitment_tree_size as usize;
+    }
+
+    // NOTE: DANGEROUS. ONLY USED IN TESTING. IN PROD, FETCH FROM CONTRACT.
     let mut size = 1;
-    while size < num_headers {
+    while size < num_leaves {
         size *= 2;
     }
     size as usize
@@ -648,6 +620,7 @@ mod tests {
     use avail_subxt::ext::avail_rust_core::grandpa::{Commit, Precommit};
     use avail_subxt::AvailHeader;
     use serde::{Deserialize, Serialize};
+    use sp1_vector_primitives::types::Precommit as CircuitPrecommit;
     use sp1_vector_primitives::{
         rotate::get_next_validator_pubkeys_from_epoch_end_header, verify_justification,
     };
@@ -655,6 +628,25 @@ mod tests {
     use test_case::test_case;
 
     use super::*;
+
+    #[test]
+    fn test_merkle_tree_size_accepts_full_range() {
+        // A range of tree_size blocks after the trusted block fills the tree exactly.
+        assert_eq!(get_merkle_tree_size(512, Some(512)), 512);
+        assert_eq!(get_merkle_tree_size(511, Some(512)), 512);
+    }
+
+    #[test]
+    #[should_panic(expected = "Header range commitment tree size")]
+    fn test_merkle_tree_size_rejects_overfull_range() {
+        get_merkle_tree_size(513, Some(512));
+    }
+
+    #[test]
+    fn test_merkle_tree_size_defaults_to_next_power_of_two() {
+        assert_eq!(get_merkle_tree_size(512, None), 512);
+        assert_eq!(get_merkle_tree_size(513, None), 1024);
+    }
 
     #[tokio::test]
     async fn test_get_simple_justification_change_authority_set() {
@@ -709,11 +701,9 @@ mod tests {
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
         let rotate_data = fetcher.get_header_rotate(new_authority_set_id).await;
-        let new_authority_set_hash =
-            compute_authority_set_commitment(&get_next_validator_pubkeys_from_epoch_end_header(
-                &rotate_data.header_bytes,
-                rotate_data.consensus_log_position,
-            ));
+        let new_authority_set_hash = compute_authority_set_commitment(
+            &get_next_validator_pubkeys_from_epoch_end_header(&rotate_data.header_bytes),
+        );
         assert_eq!(new_authority_set_hash, expected_new_authority_set_hash);
     }
 
@@ -734,6 +724,36 @@ mod tests {
         // Simplified encoding using none of the Substrate-specific structures
         let msg2 = Encode::encode(&(1u8, B256::from(h1.0).0, 2u32, 3u64, 4u64));
         assert_eq!(msg1, msg2, "Messages are not equal")
+    }
+
+    #[test]
+    fn test_keep_precommits_on_target() {
+        let target = B256::repeat_byte(1);
+        let child = B256::repeat_byte(2);
+        let precommit = |target_number, target_hash, signer: u8| CircuitPrecommit {
+            target_number,
+            target_hash,
+            pubkey: B256::repeat_byte(signer),
+            signature: B512::ZERO,
+        };
+        let justification = CircuitJustification {
+            round: 1,
+            authority_set_id: 10,
+            valset_pubkeys: vec![],
+            precommits: vec![
+                precommit(100, target, 10),
+                precommit(101, child, 11),
+                precommit(100, target, 12),
+            ],
+            block_hash: target,
+            ancestries_encoded: vec![vec![0u8; 32]],
+        };
+
+        let filtered = keep_precommits_on_target(justification);
+
+        let signers: Vec<B256> = filtered.precommits.iter().map(|p| p.pubkey).collect();
+        assert_eq!(signers, [B256::repeat_byte(10), B256::repeat_byte(12)]);
+        assert!(filtered.ancestries_encoded.is_empty());
     }
 
     #[derive(Clone, Debug, Serialize, Deserialize)]

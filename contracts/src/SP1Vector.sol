@@ -263,7 +263,7 @@ contract SP1Vector is ISP1Vector, TimelockedUpgradeable {
         if (storedTrustedHeader == bytes32(0)) {
             revert TrustedHeaderNotFound();
         }
-        if (hro.trusted_header_hash != storedTrustedHeader && hro.trusted_block != latestBlock) {
+        if (hro.trusted_header_hash != storedTrustedHeader || hro.trusted_block != latestBlock) {
             revert TrustedHeaderMismatch();
         }
 
