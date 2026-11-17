@@ -32,15 +32,12 @@ jobs:
       # protoc is pre-installed on the self-hosted runner. The Rust toolchain is installed here,
       # because the runner's default toolchain lost rustfmt and its cargo could not read a
       # version 4 Cargo.lock.
+      # The action is pinned by commit, so its code cannot change between runs.
       - name: Install Rust
-        run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v rustup >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-          fi
-          rustup toolchain install "$RUST_VERSION" --profile minimal --component rustfmt --component clippy
-          rustup default "$RUST_VERSION"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          components: rustfmt, clippy
 
       - name: Run rustfmt
         run: cargo fmt --all -- --check
@@ -64,14 +61,9 @@ jobs:
       # SP1 toolchain (cargo-prove) is pre-installed on the self-hosted runner. cargo-prove calls
       # `cargo metadata` with the default toolchain, which must read a version 4 Cargo.lock.
       - name: Install Rust
-        run: |
-          export PATH="$HOME/.cargo/bin:$PATH"
-          if ! command -v rustup >/dev/null; then
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
-          fi
-          rustup toolchain install "$RUST_VERSION" --profile minimal
-          rustup default "$RUST_VERSION"
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+        uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Verify the SP1 Vector Binary
