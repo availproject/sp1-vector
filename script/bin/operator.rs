@@ -52,10 +52,12 @@ const LOOP_TIMEOUT_MINS: u64 = 30;
 // If the RPC takes too long to respond, time out.
 const RPC_TIMEOUT_SECS: u64 = 60 * 2;
 
-// Wait for 3 required confirmations with a timeout of 60 seconds.
+// The number of confirmations that the receipt watcher is asked to wait for. alloy 0.14
+// `get_receipt` also polls for the receipt and returns the first one it gets, so the wait ends
+// after one confirmation.
 const NUM_CONFIRMATIONS: u64 = 3;
 
-// If the relay takes too long to respond, time out.
+// How long to wait for a sent transaction to get into a block.
 const RELAY_TIMEOUT_SECONDS: u64 = 60;
 
 // The number of times to retry a relay transaction.
@@ -69,13 +71,11 @@ sol! {
     #[allow(missing_docs)]
     #[sol(rpc)]
     contract SP1Vector {
-        bool public frozen;
         uint32 public latestBlock;
         uint64 public latestAuthoritySetId;
         mapping(uint64 => bytes32) public authoritySetIdToHash;
         uint32 public headerRangeCommitmentTreeSize;
         bytes32 public vectorXProgramVkey;
-        address public verifier;
 
         function rotate(bytes calldata proof, bytes calldata publicValues) external;
         function commitHeaderRange(bytes calldata proof, bytes calldata publicValues) external;
@@ -206,21 +206,25 @@ where
             header_range_request.trusted_block, header_range_request.target_block
         );
 
-        // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
-        let proof = if mock {
-            info!("Using mock proof to insert header range proof.");
-            let prover_client = ProverClient::builder().mock().build().await;
-            let mock_pk = prover_client
-                .setup(Elf::Static(SP1_VECTOR_ELF))
-                .await
-                .expect("failed to setup mock prover");
-            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
-            Ok(proof)
-        } else {
-            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
-            return if spn {
-                info!("Using spn proof to insert header range proof.");
+        self.prove(stdin, "insert header range proof").await
+    }
+
+    /// Prove `stdin` with the prover that the `SP1_PROVER` environment variable selects: `mock`,
+    /// `network`, or else the client built from the environment. `purpose` completes the log
+    /// line that says which prover is used.
+    async fn prove(&self, stdin: SP1Stdin, purpose: &str) -> Result<SP1ProofWithPublicValues> {
+        match env::var("SP1_PROVER")?.to_lowercase().as_str() {
+            "mock" => {
+                info!("Using mock proof to {}.", purpose);
+                let prover_client = ProverClient::builder().mock().build().await;
+                let mock_pk = prover_client
+                    .setup(Elf::Static(SP1_VECTOR_ELF))
+                    .await
+                    .expect("failed to setup mock prover");
+                Ok(prover_client.prove(&mock_pk, stdin).plonk().await?)
+            }
+            "network" => {
+                info!("Using spn proof to {}.", purpose);
 
                 let spn_client = ProverClient::builder().network().build().await;
                 let balance = spn_client.get_balance().await?;
@@ -230,24 +234,23 @@ where
                     .setup(Elf::Static(SP1_VECTOR_ELF))
                     .await
                     .expect("failed to setup network prover");
-                let proof = spn_client
+                spn_client
                     .prove(&network_pk, stdin)
                     .strategy(FulfillmentStrategy::Auction)
                     .min_auction_period(10)
                     .plonk()
                     .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .await;
-                proof
-            } else {
-                info!("Using env defined client insert header range proof.");
-                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
-                proof
-            };
-        };
-        proof
+                    .await
+            }
+            _ => {
+                info!("Using env defined client to {}.", purpose);
+                self.prover.prove(&self.pk, stdin).plonk().await
+            }
+        }
     }
 
-    // Ideally, post a header range update every ideal_block_interval blocks. Returns Option<(latest_block, block_to_step_to)>.
+    // Ideally, post a header range update every ideal_block_interval blocks. Returns the request
+    // data (trusted block and target block), or None when no step is possible yet.
     #[instrument(skip(self, ideal_block_interval))]
     async fn find_header_range(
         &self,
@@ -314,7 +317,8 @@ where
         Ok(None)
     }
 
-    // Current block, step_range_max and whether next authority set hash exists.
+    // The contract's latest block and tree size, the Avail head, and whether the next authority
+    // set hash exists.
     async fn get_contract_data_for_header_range(
         &self,
         chain_id: u64,
@@ -350,10 +354,11 @@ where
     }
 
     // The logic for finding the block to step to is as follows:
-    // 1. If the current epoch in the contract is not the latest epoch, step to the last justified block
-    // of the epoch.
-    // 2. If the block has a valid justification, return the block number.
-    // 3. If the block has no valid justification, return None.
+    // 1. If the authority set that signs the target has ended and its last justified block is in
+    // range, step to that block.
+    // 2. Otherwise start at the highest multiple of ideal_block_interval that is in range, and
+    // return the first block from there on that has a justification.
+    // 3. If no block up to the maximum valid block has a justification, return None.
     //
     // The returned flag is true when the block is the last justified block of `authority_set_id`.
     // The justification of such a block comes from `grandpa_proveFinality`.
@@ -403,14 +408,15 @@ where
             return Ok(None);
         }
 
-        // Check that block_to_step_to has a valid justification. If not, iterate up until the maximum_vectorx_target_block
+        // Check that block_to_step_to has a valid justification. If not, iterate up until max_valid_block_to_step_to
         // to find a valid justification. If we're unable to find a justification, something has gone
         // deeply wrong with the justification indexer.
+        let first_block_searched = block_to_step_to;
         loop {
             if block_to_step_to > max_valid_block_to_step_to {
                 error!(
                     "Unable to find any valid justifications after searching from block {} to block {}. This is likely caused by an issue with the justification indexer.",
-                    vectorx_current_block + ideal_block_interval,
+                    first_block_searched,
                     max_valid_block_to_step_to
                 );
                 return Ok(None);
@@ -481,61 +487,20 @@ where
         stdin.write(&proof_type);
         stdin.write(&rotate_input);
 
+        let next_authority_set_id = current_authority_set_id + 1;
         info!(
             "Requesting rotate proof to add authority set {}.",
-            current_authority_set_id + 1
+            next_authority_set_id
         );
 
-        // If the SP1_PROVER environment variable is set to "mock", use the mock prover.
-        let mock = env::var("SP1_PROVER")?.to_lowercase() == "mock";
-        let proof = if mock {
-            info!(
-                "Using mock proof to add authority set {}.",
-                current_authority_set_id
-            );
-            let prover_client = ProverClient::builder().mock().build().await;
-            let mock_pk = prover_client
-                .setup(Elf::Static(SP1_VECTOR_ELF))
-                .await
-                .expect("failed to setup mock prover");
-            let proof = prover_client.prove(&mock_pk, stdin).plonk().await?;
-            Ok(proof)
-        } else {
-            let spn = env::var("SP1_PROVER")?.to_lowercase() == "network";
-            return if spn {
-                info!(
-                    "Using spn proof to add authority set {}.",
-                    current_authority_set_id
-                );
-                let spn_client = ProverClient::builder().network().build().await;
-                let balance = spn_client.get_balance().await?;
-                info!(message = "Available balance", balance = balance.to_string());
-
-                let network_pk = spn_client
-                    .setup(Elf::Static(SP1_VECTOR_ELF))
-                    .await
-                    .expect("failed to setup network prover");
-                let proof = spn_client
-                    .prove(&network_pk, stdin)
-                    .strategy(FulfillmentStrategy::Auction)
-                    .min_auction_period(10)
-                    .plonk()
-                    .timeout(Duration::from_secs(PROOF_TIMEOUT_SECS))
-                    .await;
-                proof
-            } else {
-                info!(
-                    "Using env defined client to add authority set {}.",
-                    current_authority_set_id
-                );
-                let proof = self.prover.prove(&self.pk, stdin).plonk().await;
-                proof
-            };
-        };
-        proof
+        self.prove(
+            stdin,
+            &format!("add authority set {}", next_authority_set_id),
+        )
+        .await
     }
 
-    // Determine if a rotate is needed and request the proof if so. Returns Option<current_authority_set_id>.
+    // Determine if a rotate is needed. Returns Option<current_authority_set_id>.
     #[instrument(skip(self))]
     async fn find_rotate(&self, chain_id: u64) -> Result<Option<u64>> {
         debug!("finding rotate for chain {}", chain_id);
@@ -739,11 +704,12 @@ where
             .for_each_chain(chain_ids, "Finding the rotate", |id| self.find_rotate(id))
             .await;
 
-        // "Batch" the chains by the next authority set id.
+        // "Batch" the chains by the authority set id that `find_rotate` returns. That is the
+        // chain's current set id, and the rotate adds the set after it.
         let mut next_authority_set_to_chain_ids_map: HashMap<u64, Vec<u64>> =
             HashMap::with_capacity(next_authority_set_ids.len());
 
-        // Populate the map with the next authority set ids.
+        // Populate the map with these current authority set ids.
         next_authority_set_ids
             .into_iter()
             .filter(|(_, next_authority_set_id)| next_authority_set_id.is_some())
@@ -1071,16 +1037,15 @@ where
 
         if has_errors {
             // By this point, any known errors have been logged.
-            return Err(anyhow::anyhow!(""));
+            return Err(anyhow::anyhow!("At least one step of the run failed"));
         }
 
         Ok(())
     }
 
-    // Run the operator, indefinitely.
+    // Run the operator once, with a timeout. The scheduler that starts the process provides the
+    // loop.
     async fn run(self) -> Result<()> {
-        let job_interval = Duration::from_secs(get_job_interval_mins() * 60);
-
         tokio::select! {
             res = self.run_once() => {
                 if let Err(e) = res {
@@ -1093,20 +1058,8 @@ where
             }
         }
 
-        info!("Sleeping for {:?} minutes", job_interval.as_secs() / 60);
         Ok(())
     }
-}
-
-// returns the interval of the job that triggers the operator
-fn get_job_interval_mins() -> u64 {
-    let mut loop_interval_mins = 60;
-    if let Ok(job_interval_mins_env) = env::var("LOOP_INTERVAL_MINS") {
-        loop_interval_mins = job_interval_mins_env
-            .parse::<u64>()
-            .expect("invalid LOOP_INTERVAL_MINS");
-    }
-    loop_interval_mins
 }
 
 fn get_block_update_interval() -> u32 {
@@ -1289,7 +1242,11 @@ where
     if skipped_chain {
         bail!("At least one chain was skipped at startup");
     }
-    run_result
+    run_result?;
+
+    // Only here is it known that no chain was skipped and that no step failed.
+    info!("The run finished without errors");
+    Ok(())
 }
 
 /// The configured secret values. `main` sets it once the chain config is loaded.
@@ -1401,16 +1358,27 @@ mod config {
     }
 
     impl ChainConfig {
-        /// Tries to read from the `CHAINS_PATH` environment variable, then the default path (`../chains.json`).
+        /// Reads the file at `CHAINS_PATH`, or at the default path (`chains.json`) when the variable
+        /// is not set.
         ///
-        /// If neither are set, it will try to use [`Self::from_env`].
+        /// If the file is missing or cannot be read, it will try to use [`Self::from_env`].
         pub fn fetch() -> Result<Vec<Self>> {
             const DEFAULT_PATH: &str = "chains.json";
 
             let path = env::var("CHAINS_PATH").unwrap_or(DEFAULT_PATH.to_string());
 
-            Self::from_file(&path).or_else(|_| {
-                tracing::info!("No chains file found, trying env.");
+            Self::from_file(&path).or_else(|e| {
+                // The text of a JSON error can quote a value of the file, and the file holds RPC
+                // URLs. So the log gets only the position of a JSON error.
+                let reason = match e.downcast_ref::<serde_json::Error>() {
+                    Some(json_error) => format!(
+                        "invalid JSON at line {} column {}",
+                        json_error.line(),
+                        json_error.column()
+                    ),
+                    None => e.to_string(),
+                };
+                tracing::info!("No usable chains file ({}), trying env.", reason);
                 Self::from_env().map(|c| vec![c])
             })
         }
