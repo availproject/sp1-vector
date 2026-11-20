@@ -2,46 +2,12 @@ use std::env;
 use std::str::FromStr;
 use std::time::Duration;
 
-use alloy::network::Network;
 use alloy::primitives::B256;
-use alloy::providers::Provider;
 use alloy::transports::http::Client;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tracing::info;
-
-/// Get the gas limit associated with the chain id. Note: These values have been found through
-/// trial and error and can be configured.
-pub fn get_gas_limit(chain_id: u64) -> u64 {
-    if chain_id == 42161 || chain_id == 421614 {
-        25_000_000
-    } else {
-        1_500_000
-    }
-}
-
-/// Get the gas fee cap associated with the chain id, using the provider to get the gas price. Note:
-/// These values have been found through trial and error and can be configured.
-pub async fn get_fee_cap<P, N>(chain_id: u64, provider: &P) -> u128
-where
-    P: Provider<N>,
-    N: Network,
-{
-    // Base percentage multiplier for the gas fee.
-    let mut multiplier = 20;
-
-    // Double the estimated gas fee cap for the testnets.
-    if chain_id == 17000 || chain_id == 421614 || chain_id == 11155111 || chain_id == 84532 {
-        multiplier = 100
-    }
-
-    // Get the gas price.
-    let gas_price = provider.get_gas_price().await.unwrap();
-
-    // Calculate the fee cap.
-    (gas_price * (100 + multiplier)) / 100
-}
 
 #[derive(Serialize, Deserialize)]
 pub enum KMSRelayStatus {
