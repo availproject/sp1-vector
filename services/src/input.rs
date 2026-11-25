@@ -18,11 +18,7 @@ use std::time::Duration;
 use avail_subxt::avail_rust_core::grandpa::{GrandpaJustification, Public};
 use avail_subxt::subxt_rpcs::client::RpcParams;
 use avail_subxt::StorageValue;
-use avail_subxt::{
-    avail_rust_core::grandpa::{AuthorityId, ConsensusLog},
-    ext::subxt_core::config::substrate::DigestItem,
-    AvailHeader, Client as AvailClient, H256,
-};
+use avail_subxt::{AvailHeader, Client as AvailClient, H256};
 
 /// In order to avoid errors from the RPC client, tasks should coordinate via this mutex to coordinate
 /// large amounts of concurrent requests.
@@ -37,6 +33,8 @@ const JUSTIFICATION_REQUEST_ATTEMPTS: u32 = 3;
 /// The error text of the justification endpoint for a block without a justification.
 const NO_JUSTIFICATION_ERROR: &str = "No justification found";
 
+/// Build an HTTP client with the request timeout. A client keeps its connections open, so reuse
+/// one client for requests that follow each other.
 fn http_client() -> Result<reqwest::Client> {
     Ok(reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?)
 }
@@ -47,6 +45,9 @@ pub struct RpcDataFetcher {
     pub client: AvailClient,
     pub avail_chain_id: String,
     pub vectorx_query_url: Option<String>,
+    /// The client for the justification endpoint. The block search sends many requests in a row,
+    /// and they reuse its connection.
+    http: reqwest::Client,
 }
 
 /// Data for the header range request.
@@ -92,6 +93,7 @@ impl RpcDataFetcher {
             client,
             avail_chain_id,
             vectorx_query_url: env::var("VECTORX_QUERY_URL").ok(),
+            http: http_client()?,
         })
     }
 
@@ -114,7 +116,7 @@ impl RpcDataFetcher {
         // Retry a failed request, so that one transient failure does not end the run.
         let mut attempt = 1;
         loop {
-            match request_justification(&request_url, block_number).await {
+            match request_justification(&self.http, &request_url, block_number).await {
                 Ok(justification) => return Ok(justification),
                 Err(e) if attempt < JUSTIFICATION_REQUEST_ATTEMPTS => {
                     tracing::warn!(
@@ -178,12 +180,18 @@ impl RpcDataFetcher {
     }
 
     pub async fn get_rotate_inputs(&self, authority_set_id: u64) -> Result<RotateInputs> {
+        let epoch_end_block = self.last_justified_block(authority_set_id).await?;
+        ensure!(
+            epoch_end_block != 0,
+            "Current authority set is still active!"
+        );
+
         let justification = keep_precommits_on_target(
-            self.get_justification_data_epoch_end_block(authority_set_id)
+            self.get_justification_data_epoch_end_block(epoch_end_block)
                 .await?,
         );
 
-        let header_rotate_data = self.get_header_rotate(authority_set_id).await?;
+        let header_rotate_data = self.get_header_rotate(epoch_end_block).await?;
 
         Ok(RotateInputs {
             justification,
@@ -264,7 +272,7 @@ impl RpcDataFetcher {
             // Await all futures concurrently
             let headers_batch: Vec<AvailHeader> = try_join_all(header_futures).await?;
 
-            headers.extend_from_slice(&headers_batch);
+            headers.extend(headers_batch);
             curr_block += MAX_CONCURRENT_WS_REQUESTS as u32;
         }
         Ok(headers)
@@ -336,16 +344,6 @@ impl RpcDataFetcher {
         Ok(authorities)
     }
 
-    /// Gets the authority set id and authority set hash that are defined in block_number. This authority set
-    /// attests to block_number + 1.
-    pub async fn get_authority_set_data_for_block(&self, block_number: u32) -> Result<(u64, B256)> {
-        let authority_set_id = self.get_authority_set_id(block_number).await?;
-        let authority_set_hash = self
-            .compute_authority_set_hash_for_block(block_number)
-            .await?;
-        Ok((authority_set_id, authority_set_hash))
-    }
-
     /// Computes the authority_set_hash for a given block number. Note: This is the authority set hash
     /// that validates the next block after the given block number.
     pub async fn compute_authority_set_hash_for_block(&self, block_number: u32) -> Result<B256> {
@@ -408,45 +406,11 @@ impl RpcDataFetcher {
             return Ok(None);
         };
 
-        // Convert DB stored justification into CircuitJustification.
+        // Convert the justification into a CircuitJustification.
         let circuit_justification = self
             .compute_data_from_justification(grandpa_justification, block_number)
             .await?;
         Ok(Some(circuit_justification))
-    }
-
-    /// Get the latest justification data. Because Avail does not store the justification data for
-    /// all blocks, we can only generate a proof using the latest justification data or the justification data for a specific block.
-    pub async fn get_latest_justification_data(
-        &self,
-    ) -> Result<(CircuitJustification, AvailHeader)> {
-        let Ok(block_height) = self.client.finalized_block_height_ext(true, false).await else {
-            panic!("Failed to fetch finalized block height")
-        };
-
-        let mut sub = self
-            .client
-            .subscription_grandpa_justification(block_height, Duration::from_secs(5));
-
-        let Ok(justification) = sub.next().await else {
-            panic!("Failed to fetch next justification")
-        };
-
-        let (block_height, block_hash) = (
-            justification.commit.target_number,
-            justification.commit.target_hash,
-        );
-
-        let Ok(Some(block_header)) = self.client.block_header_ext(block_hash, true, false).await
-        else {
-            panic!("Failed to fetch block header")
-        };
-
-        let data = self
-            .compute_data_from_justification(justification, block_height)
-            .await?;
-
-        Ok((data, block_header))
     }
 
     /// Get the justification data for a block number. Unsafe, not guaranteed to be correct.
@@ -491,20 +455,16 @@ impl RpcDataFetcher {
         Ok(Some(justification))
     }
 
-    /// Get the justification data for an epoch end block from the curr_authority_set_id to the next authority set id.
-    /// Fetch the authority set and justification proof for the last block in the current epoch. If the finality proof is a
+    /// Get the justification data for an epoch end block, the last block that an authority set justifies.
+    /// Fetch the authority set and justification proof for the block. If the finality proof is a
     /// simple justification, return a CircuitJustification with the encoded precommit that all
     /// authorities sign, the validator signatures, and the authority set's pubkeys.
-    pub async fn get_justification_data_epoch_end_block(
+    ///
+    /// `epoch_end_block` must not be 0. `get_rotate_inputs` checks that.
+    async fn get_justification_data_epoch_end_block(
         &self,
-        curr_authority_set_id: u64,
+        epoch_end_block: u32,
     ) -> Result<CircuitJustification> {
-        let epoch_end_block = self.last_justified_block(curr_authority_set_id).await?;
-        ensure!(
-            epoch_end_block != 0,
-            "Current authority set is still active!"
-        );
-
         let grandpa_justification = self
             .get_justification_data_for_block_unsafe(epoch_end_block)
             .await?
@@ -513,49 +473,12 @@ impl RpcDataFetcher {
             .await
     }
 
-    /// Filter the authority set changes from the header at the end of the epoch associated with the
-    /// given authority set id.
-    /// Source: https://github.com/Rahul8869/avail-light/blob/1ee54e10c037474d2ee99a0762e6ffee43f0df1c/src/utils.rs#L78
-    pub async fn filter_auth_set_changes(
-        &self,
-        authority_set_id: u64,
-    ) -> Result<Vec<Vec<(AuthorityId, u64)>>> {
-        let epoch_end_block = self.last_justified_block(authority_set_id).await?;
-        ensure!(
-            epoch_end_block != 0,
-            "Current authority set is still active!"
-        );
-
-        let header = self.get_header(epoch_end_block).await?;
-
-        let new_auths = header
-            .digest
-            .logs
-            .iter()
-            .filter_map(|e| match &e {
-                DigestItem::Consensus([b'F', b'R', b'N', b'K'], data) => {
-                    match ConsensusLog::<u32>::decode(&mut data.as_slice()) {
-                        Ok(ConsensusLog::ScheduledChange(x)) => Some(x.next_authorities),
-                        Ok(ConsensusLog::ForcedChange(_, x)) => Some(x.next_authorities),
-                        _ => None,
-                    }
-                }
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        Ok(new_auths)
-    }
-
-    /// This function takes in a block_number as input, and fetches the new authority set specified
-    /// in the epoch end block. It returns the encoded epoch end header, which the circuit decodes to
-    /// find the new authority set.
-    pub async fn get_header_rotate(&self, authority_set_id: u64) -> Result<HeaderRotateData> {
-        let epoch_end_block = self.last_justified_block(authority_set_id).await?;
-        ensure!(
-            epoch_end_block != 0,
-            "Current authority set is still active!"
-        );
-
+    /// This function takes in the number of an epoch end block as input, and fetches the new authority
+    /// set specified in that block. It returns the encoded epoch end header, which the circuit decodes
+    /// to find the new authority set.
+    ///
+    /// `epoch_end_block` must not be 0. `get_rotate_inputs` checks that.
+    async fn get_header_rotate(&self, epoch_end_block: u32) -> Result<HeaderRotateData> {
         let header = self.get_header(epoch_end_block).await?;
 
         let header_bytes = header.encode();
@@ -587,10 +510,11 @@ impl RpcDataFetcher {
 /// The endpoint answers HTTP 200 with `success: false` both for a block without a justification
 /// and for its own failures, for example a database error. Only the error text tells them apart.
 async fn request_justification(
+    http: &reqwest::Client,
     request_url: &str,
     block_number: u32,
 ) -> Result<Option<GrandpaJustification>> {
-    let body = http_client()?
+    let body = http
         .get(request_url)
         .send()
         .await
@@ -846,8 +770,12 @@ mod tests {
         println!("authority_set_hash {:?}", hex::encode(authority_set_hash.0));
         println!("header_hash {:?}", hex::encode(header_hash.0));
 
+        let epoch_end_block = fetcher
+            .last_justified_block(authority_set_id)
+            .await
+            .unwrap();
         let _ = fetcher
-            .get_justification_data_epoch_end_block(authority_set_id)
+            .get_justification_data_epoch_end_block(epoch_end_block)
             .await
             .unwrap();
     }
@@ -892,7 +820,7 @@ mod tests {
         assert_eq!(previous_authority_set_id, target_authority_set_id);
 
         let rotate_data = fetcher
-            .get_header_rotate(new_authority_set_id)
+            .get_header_rotate(epoch_end_block_number)
             .await
             .unwrap();
         let new_authority_set_hash = compute_authority_set_commitment(

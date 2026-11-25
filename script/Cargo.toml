@@ -5,7 +5,7 @@ edition = "2021"
 
 [[bin]]
 name = "operator"
-path = "bin/operator.rs"
+path = "bin/operator/main.rs"
 
 [[bin]]
 name = "genesis"
